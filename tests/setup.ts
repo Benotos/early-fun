@@ -1,4 +1,5 @@
-// Most historical end-to-end fixtures assert peak-entry ranking. The production
-// default remains realized profit; tests for realized accounting exercise that
-// ledger directly and can explicitly override WIN_MODE when checking scoring.
+// The legacy pipeline fixtures exercise peak-entry mode and allow held bags.
+ // The production default remains realized profit with sell-required enabled;
+ // realized ledger behavior has dedicated regression coverage.
 process.env.WIN_MODE ??= 'peak';
+process.env.WIN_REQUIRE_SELL ??= '0';
