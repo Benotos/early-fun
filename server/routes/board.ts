@@ -6,9 +6,10 @@ import { HttpError, route } from '../lib/http';
 import { getStore } from '../lib/store';
 
 export default route(async ({ q }) => {
+  const store = getStore();
   const range = (q.get('range') || 'today') as Range;
   if (!['today', 'yesterday', 'week'].includes(range)) throw new HttpError(400, 'bad_range', 'range must be today, yesterday or week');
-  const raw = await getStore().get(K.snap(range));
+  const raw = await store.get(K.snap(range));
   const now = Math.floor(Date.now() / 1000);
   let body: BoardResponse;
   if (!raw) {
@@ -41,7 +42,7 @@ export default route(async ({ q }) => {
   let freshCoinCount = 0;
   let hasFreshCoinCount = false;
   for (const day of coinDays) {
-    const rawCoins = await getStore().get(K.coinsum(day));
+    const rawCoins = await store.get(K.coinsum(day));
     if (rawCoins === null) continue;
     try {
       const rows = JSON.parse(rawCoins);
