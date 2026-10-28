@@ -3,6 +3,7 @@ import { K, readDayBoard } from '../server/lib/boards';
 import { loadCoin, runScan } from '../server/lib/scanner';
 import { MemoryStore } from '../server/lib/store';
 import { NOW, buildWorld, freshStore, t } from './helpers';
+import { addCoin, FakeChain } from '../server/testing/fakechain';
 
 let store: MemoryStore;
 beforeEach(() => {
@@ -19,6 +20,26 @@ async function scanAll(world: ReturnType<typeof buildWorld>, now = NOW, max = 40
 }
 
 describe('end to end scan with synthetic chain', () => {
+  it('discovers older migrated coins through the resumable history cursor', async () => {
+    const chain = new FakeChain();
+    const older = addCoin(chain, { symbol: 'OLD', createTime: t(8, 0, 21), migTime: t(8, 20, 21), seed: 101 });
+    addCoin(chain, { symbol: 'NEW', createTime: t(8, 0), migTime: t(8, 20), seed: 102 });
+
+    // Keep the synthetic migration ordering deterministic and simulate a live cursor
+    // that has already caught up to the newest migration.
+    chain.migs.sort((a, b) => (a.blockTime ?? 0) - (b.blockTime ?? 0));
+    chain.migs[0].slot = 100;
+    chain.migs[1].slot = 200;
+    const newest = chain.migs[1];
+    await store.set('mig:cursor', newest.signature);
+    await store.set('mig:history:cursor', newest.signature);
+
+    const report = await runScan({ store, chain, budgetMs: 20000, now: NOW });
+    expect(report.status).toBe('ok');
+    expect(await loadCoin(store, older.mint)).not.toBeNull();
+    expect((await loadCoin(store, older.mint))!.pool).toBe(older.pool);
+  });
+
   it('ranks winners and losers and applies every anti abuse rule', async () => {
     const world = buildWorld();
     const rep = await scanAll(world);
