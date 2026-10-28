@@ -63,6 +63,7 @@ export async function saveCoin(store: Store, s: CoinState): Promise<void> {
 }
 
 const RULES_VERSION = 9;
+const SCORING_VERSION = 10;
 
 /** seconds between re-reads of a coin, by how long ago it migrated */
 function rescanEvery(ageSec: number): number {
@@ -322,11 +323,14 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
       }
       const h = await store.hgetall(K.idx(d));
       for (const [m, v] of Object.entries(h)) {
-        if (v === `f|${RULES_VERSION}`) continue;
+        if (v === `f|${RULES_VERSION}|${SCORING_VERSION}`) continue;
         if (v === 'f' || v.startsWith('f|')) {
-          const version = v === 'f' ? 0 : Number(v.split('|')[1]) || 0;
-          if (version === RULES_VERSION) continue;
-          // Final coins from older rules must be replayed once to repair their results.
+          const parts = v.split('|');
+          const rulesVersion = v === 'f' ? 0 : Number(parts[1]) || 0;
+          const scoringVersion = v === 'f' ? 0 : Number(parts[2]) || 0;
+          if (rulesVersion === RULES_VERSION && scoringVersion === SCORING_VERSION) continue;
+          // Requeue old final entries for a score-only rebuild, or a history replay
+          // when the stored scan rules themselves are old.
           queue.push({ mint: m, day: d, last: 0 });
           continue;
         }
@@ -350,8 +354,9 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
         continue;
       }
       const needsReplay = s.rv !== RULES_VERSION;
-      if (s.final && !needsReplay && !s.rebuildPending) {
-        await store.cmd('HSET', K.idx(q.day), q.mint, `f|${RULES_VERSION}`);
+      const needsRescore = s.sv !== SCORING_VERSION;
+      if (s.final && !needsReplay && !needsRescore && !s.rebuildPending) {
+        await store.cmd('HSET', K.idx(q.day), q.mint, `f|${RULES_VERSION}|${SCORING_VERSION}`);
         continue;
       }
       try {
@@ -359,11 +364,15 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
           const m = await chain.isMayhem(s.curve).catch(() => null);
           if (m !== null) s.mh = m;
         }
-        if (needsReplay) {
-          resetTradeAccounting(s);
+        if (needsReplay) resetTradeAccounting(s);
+        if (needsReplay || needsRescore) {
           s.rv = RULES_VERSION;
+          s.sv = SCORING_VERSION;
         }
         const res = await scanCoin(chain, s, r, now, deadline);
+        // Scoring changes can be applied to a saved ledger. Do not replay all
+        // transactions when only eligibility rules changed.
+        if (needsRescore) res.changed = true;
         // Keep the previously published result during replay until the bonding curve
         // history is complete; otherwise a partial replay would temporarily erase winners.
         if (s.rebuildPending && s.curveDone) {
@@ -384,7 +393,7 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
           K.idx(s.day),
           s.mint,
           s.final
-            ? `f|${RULES_VERSION}`
+            ? `f|${RULES_VERSION}|${SCORING_VERSION}`
             : `${now}|${s.migTime}${s.replayAccounting ? '|r' : ''}`
         );
         if (res.changed && !s.rebuildPending) {
