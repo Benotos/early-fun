@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+.mockdb
+*.log
+.vercel
+.env.local
+.env*.local

@@ -1,0 +1,70 @@
+import { describe, expect, it } from 'vitest';
+import { findFunder, txKeys } from '../server/lib/chain';
+import { extractTrade, parseMigration } from '../server/lib/trades';
+import { WSOL } from '../server/lib/env';
+import { curveAddress } from '../server/lib/pda';
+import { fakeKey, mkAmmTx, mkCreateTx, mkCurveTx, mkFundTx, mkMigrationTx, fakeSig } from '../server/testing/fakechain';
+
+const mint = fakeKey();
+const curve = curveAddress(mint);
+const pool = fakeKey();
+const wallet = fakeKey();
+const base = { sig: 's', slot: 100, time: 1000, wallet, mint };
+
+describe('extractTrade', () => {
+  it('reads a curve buy and computes price in SOL per token', () => {
+    const tr = extractTrade(mkCurveTx({ ...base, address: curve, side: 'buy', sol: 1, tokens: 1_000_000e6 / 30 }), { kind: 'curve', address: curve, mint })!;
+    expect(tr.side).toBe('buy');
+    expect(tr.wallet).toBe(wallet);
+    expect(tr.sol).toBeCloseTo(1, 9);
+    // 1 SOL for 1e6/30 tokens => price 30/1e6 SOL per token, market cap 30 SOL on 1B supply
+    expect(tr.price * 1e9).toBeCloseTo(30000, 3);
+  });
+  it('reads a curve sell', () => {
+    const tr = extractTrade(mkCurveTx({ ...base, address: curve, side: 'sell', sol: 2, tokens: 5_000_000e6 }), { kind: 'curve', address: curve, mint })!;
+    expect(tr.side).toBe('sell');
+    expect(tr.sol).toBeCloseTo(2, 9);
+  });
+  it('ignores create and migration transactions on the curve', () => {
+    const create = mkCreateTx({ sig: 'c', slot: 1, time: 1, dev: wallet, mint, curve });
+    const mig = mkMigrationTx({ sig: 'm', slot: 2, time: 2, mint, curve, pool });
+    expect(extractTrade(create, { kind: 'curve', address: curve, mint })).toBeNull();
+    expect(extractTrade(mig, { kind: 'curve', address: curve, mint })).toBeNull();
+    expect(extractTrade(mig, { kind: 'amm', address: pool, mint })).toBeNull(); // liquidity add
+  });
+  it('reads AMM swaps in both directions', () => {
+    const buy = extractTrade(mkAmmTx({ ...base, address: pool, side: 'buy', sol: 4, tokens: 1e12 }), { kind: 'amm', address: pool, mint })!;
+    const sell = extractTrade(mkAmmTx({ ...base, address: pool, side: 'sell', sol: 4, tokens: 1e12 }), { kind: 'amm', address: pool, mint })!;
+    expect(buy.side).toBe('buy');
+    expect(sell.side).toBe('sell');
+    expect(buy.price).toBeCloseTo(4 / 1e6, 12);
+  });
+  it('skips failed transactions', () => {
+    const tx = mkCurveTx({ ...base, address: curve, side: 'buy', sol: 1, tokens: 1e9 });
+    tx.meta!.err = { InstructionError: [0, 'Custom'] };
+    expect(extractTrade(tx, { kind: 'curve', address: curve, mint })).toBeNull();
+  });
+  it('handles string keys with loaded addresses', () => {
+    const tx = mkCurveTx({ ...base, address: curve, side: 'buy', sol: 1, tokens: 1e9 });
+    const keys = txKeys(tx);
+    tx.transaction.message.accountKeys = keys.slice(0, 2) as any;
+    tx.meta!.loadedAddresses = { writable: keys.slice(2, 3), readonly: keys.slice(3) };
+    expect(txKeys(tx)).toEqual(keys);
+    expect(extractTrade(tx, { kind: 'curve', address: curve, mint })?.side).toBe('buy');
+  });
+});
+
+describe('parseMigration and funding', () => {
+  it('finds pool and mint, ignoring stray token accounts', () => {
+    const m = parseMigration(mkMigrationTx({ sig: 'm', slot: 2, time: 2, mint, curve, pool }))!;
+    expect(m.pool).toBe(pool);
+    expect(m.mint).toBe(mint);
+    expect(m.mint).not.toBe(WSOL);
+  });
+  it('findFunder picks the first inbound SOL transfer from someone else', () => {
+    const funder = fakeKey();
+    const txs = [mkFundTx({ sig: fakeSig(), slot: 1, time: 1, funder, wallet, sol: 2 })];
+    expect(findFunder(wallet, txs)).toBe(funder);
+    expect(findFunder(fakeKey(), txs)).toBeNull();
+  });
+});

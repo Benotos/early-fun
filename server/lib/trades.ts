@@ -1,0 +1,180 @@
+import { RawTx, txKeys } from './chain';
+import { TOKEN_DECIMALS, WSOL } from './env';
+
+export interface Trade {
+  sig: string;
+  slot: number;
+  time: number;
+  wallet: string;
+  side: 'buy' | 'sell';
+  sol: number; // SOL amount that moved through the venue
+  tokens: number; // raw token units
+  price: number; // SOL per whole token
+}
+
+export interface Venue {
+  kind: 'curve' | 'amm';
+  address: string;
+  mint: string;
+}
+
+function tokenDelta(tx: RawTx, owner: string, mint: string): number {
+  const m = tx.meta!;
+  let d = 0;
+  for (const b of m.postTokenBalances || []) if (b.owner === owner && b.mint === mint) d += Number(b.uiTokenAmount.amount);
+  for (const b of m.preTokenBalances || []) if (b.owner === owner && b.mint === mint) d -= Number(b.uiTokenAmount.amount);
+  return d;
+}
+
+/** the wallet that really received (buy) or gave up (sell) the tokens, never the venue itself */
+function counterparty(tx: RawTx, mint: string, venue: string, side: 'buy' | 'sell'): string | null {
+  const m = tx.meta!;
+  const d = new Map<string, number>();
+  for (const b of m.postTokenBalances || []) if (b.owner && b.mint === mint) d.set(b.owner, (d.get(b.owner) || 0) + Number(b.uiTokenAmount.amount));
+  for (const b of m.preTokenBalances || []) if (b.owner && b.mint === mint) d.set(b.owner, (d.get(b.owner) || 0) - Number(b.uiTokenAmount.amount));
+  let best: string | null = null;
+  let bestAbs = 0;
+  for (const [o, x] of d) {
+    if (o === venue) continue;
+    if (side === 'buy' ? x <= 0 : x >= 0) continue;
+    if (Math.abs(x) > bestAbs) {
+      bestAbs = Math.abs(x);
+      best = o;
+    }
+  }
+  return best;
+}
+
+export function extractTrade(tx: RawTx, v: Venue): Trade | null {
+  const meta = tx.meta;
+  if (!meta || meta.err) return null;
+  const keys = txKeys(tx);
+  let wallet = keys[0];
+  let side: 'buy' | 'sell';
+  let sol: number;
+  let tokens: number;
+
+  if (v.kind === 'curve') {
+    const i = keys.indexOf(v.address);
+    if (i < 0) return null;
+    const solDelta = (meta.postBalances[i] - meta.preBalances[i]) / 1e9;
+    const tokDelta = tokenDelta(tx, v.address, v.mint);
+    if (solDelta > 0 && tokDelta < 0) {
+      side = 'buy';
+      sol = solDelta;
+      tokens = -tokDelta;
+    } else if (solDelta < 0 && tokDelta > 0) {
+      side = 'sell';
+      sol = -solDelta;
+      tokens = tokDelta;
+    } else return null;
+  } else {
+    const base = tokenDelta(tx, v.address, v.mint);
+    const quote = tokenDelta(tx, v.address, WSOL) / 1e9;
+    if (base < 0 && quote > 0) {
+      side = 'buy';
+      sol = quote;
+      tokens = -base;
+    } else if (base > 0 && quote < 0) {
+      side = 'sell';
+      sol = -quote;
+      tokens = base;
+    } else return null;
+  }
+
+  const owner = counterparty(tx, v.mint, v.address, side);
+  if (!owner) return null; // no wallet actually moved these tokens
+  wallet = owner;
+
+  const whole = tokens / 10 ** TOKEN_DECIMALS;
+  if (!(whole > 0) || !(sol > 0)) return null;
+  return {
+    sig: tx.transaction.signatures[0],
+    slot: tx.slot,
+    time: tx.blockTime ?? 0,
+    wallet,
+    side,
+    sol,
+    tokens,
+    price: sol / whole,
+  };
+}
+
+export function sortTrades(t: Trade[]): Trade[] {
+  return t; // API already returns ascending by slot then transactionIndex
+}
+
+export interface Migration {
+  mint: string;
+  pool: string;
+}
+
+/** Finds the new AMM pool and its mint in a migration transaction. */
+export function parseMigration(tx: RawTx): Migration | null {
+  const meta = tx.meta;
+  if (!meta || meta.err) return null;
+  const post = meta.postTokenBalances || [];
+  const byOwner = new Map<string, TokenBalanceLite[]>();
+  for (const b of post) {
+    if (!b.owner) continue;
+    const arr = byOwner.get(b.owner) || [];
+    arr.push({ mint: b.mint, amount: Number(b.uiTokenAmount.amount), decimals: b.uiTokenAmount.decimals });
+    byOwner.set(b.owner, arr);
+  }
+  let best: { pool: string; mint: string; wsol: number } | null = null;
+  for (const [owner, arr] of byOwner) {
+    const w = arr.find((x) => x.mint === WSOL);
+    const t = arr.find((x) => x.mint !== WSOL && x.decimals === TOKEN_DECIMALS);
+    if (w && t && (!best || w.amount > best.wsol)) best = { pool: owner, mint: t.mint, wsol: w.amount };
+  }
+  if (best) return { pool: best.pool, mint: best.mint };
+  // fallback: pump mint with 6 decimals, pool is the owner holding the most of it
+  let fb: { pool: string; mint: string; amt: number } | null = null;
+  for (const b of [...(meta.postTokenBalances || []), ...(meta.preTokenBalances || [])]) {
+    if (!b.owner || b.mint === WSOL || b.uiTokenAmount.decimals !== TOKEN_DECIMALS) continue;
+    if (!b.mint.endsWith('pump')) continue;
+    const amt = Number(b.uiTokenAmount.amount);
+    if (!fb || amt > fb.amt) fb = { pool: b.owner, mint: b.mint, amt };
+  }
+  return fb ? { pool: fb.pool, mint: fb.mint } : null;
+}
+
+/** short description of a tx shape for debugging unparsed migrations */
+export function describeTx(tx: RawTx): string {
+  const m = tx.meta;
+  const post = (m?.postTokenBalances || []).slice(0, 6).map((b) => `${b.mint.slice(0, 5)}:${b.uiTokenAmount.decimals}:${(b.owner || '-').slice(0, 5)}`);
+  const keys = tx.transaction?.message?.accountKeys?.length ?? 0;
+  return `err=${m ? JSON.stringify(m.err) : 'nometa'} post=${m?.postTokenBalances?.length ?? 'x'} pre=${m?.preTokenBalances?.length ?? 'x'} keys=${keys} [${post.join(' ')}]`;
+}
+
+interface TokenBalanceLite {
+  mint: string;
+  amount: number;
+  decimals: number;
+}
+
+/** Jito tip accounts. Tips paid to them count toward a coin's global fees. */
+const JITO_TIP = new Set([
+  '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',
+  'HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe',
+  'Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY',
+  'ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49',
+  'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh',
+  'ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt',
+  'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL',
+  '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',
+]);
+
+/** network fee (base + priority) plus Jito tips paid by one transaction, in SOL */
+export function txFeesSol(tx: RawTx): number {
+  const m = tx.meta;
+  if (!m) return 0;
+  let lam = Number(m.fee) || 0;
+  const keys = txKeys(tx);
+  for (let i = 0; i < keys.length; i++) {
+    if (!JITO_TIP.has(keys[i])) continue;
+    const d = (m.postBalances[i] ?? 0) - (m.preBalances[i] ?? 0);
+    if (d > 0) lam += d;
+  }
+  return lam / 1e9;
+}

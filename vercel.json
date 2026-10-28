@@ -1,0 +1,10 @@
+{
+  "rewrites": [
+    { "source": "/s/:id", "destination": "/api/s?id=:id" },
+    { "source": "/((?!api/|assets/|favicon|og\\.png|maintenance).*)", "destination": "/index.html" }
+  ],
+  "functions": {
+    "api/scan.js": { "maxDuration": 60 },
+    "api/img.js": { "maxDuration": 20 }
+  }
+}

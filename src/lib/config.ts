@@ -1,0 +1,11 @@
+export const SITE_NAME: string = import.meta.env.VITE_SITE_NAME || 'EARLY.FUN';
+export const TOKEN_CA: string = (import.meta.env.VITE_TOKEN_CA || '').trim();
+export const X_URL: string = import.meta.env.VITE_X_URL || 'https://x.com';
+export const PAYOUTS_LIVE: boolean = import.meta.env.VITE_PAYOUTS_LIVE === '1';
+export const pumpUrl = (mint: string) => `https://pump.fun/coin/${mint}`;
+const share = Number(import.meta.env.VITE_WINNERS_SHARE || 50);
+export const WINNERS_PCT = Number.isFinite(share) && share >= 0 && share <= 100 ? Math.round(share) : 50;
+export const LOSERS_PCT = 100 - WINNERS_PCT;
+const pw = (import.meta.env.VITE_PAYOUT_WEIGHTS || '35,25,18,12,10').split(',').map((x: string) => Number(x.trim())).filter((x: number) => Number.isFinite(x) && x > 0);
+export const PAYOUT_WEIGHTS: number[] = pw.length ? pw : [1];
+export const PAYOUT_SLOTS = PAYOUT_WEIGHTS.length;
