@@ -183,11 +183,12 @@ export default route(async ({ q, ip }) => {
   if ((!winByCoin.size || !lossByCoin.size) && mints.length) {
     try {
       const chain = new HeliusChain();
-      (chain as unknown as { setDeadline?: (t: number) => void }).setDeadline?.(Date.now() + 8500);
+      const scanDeadline = Date.now() + 8500;
+      (chain as unknown as { setDeadline?: (t: number) => void }).setDeadline?.(scanDeadline);
       const since = Math.floor(Date.now() / 1000) - 7 * 86400;
       const transactions: RawTx[] = [];
       let token: string | null = null;
-      for (let pageNo = 0; pageNo < 5 && Date.now() < Date.now() + 8000; pageNo++) {
+      for (let pageNo = 0; pageNo < 5 && Date.now() < scanDeadline - 1000; pageNo++) {
         const page = await chain.txsForAddress(address, { sort: 'desc', limit: 1000, token });
         if (!page.txs.length) break;
         transactions.push(...page.txs.filter((tx) => (tx.blockTime ?? 0) >= since));
