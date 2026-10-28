@@ -3,7 +3,7 @@ name: backfill wallet ledgers
 # One-time backfill trigger: adding or editing this workflow on main starts a
 # normal scanner window that replays existing coin history into per-wallet ledgers.
 # It shares the regular scan concurrency group so two workers never scan at once.
-# Latest run must use scanner SCORING_VERSION=12 and WALLET_LEDGER_VERSION=2.
+# Backfill current main scanner rules: RULES_VERSION=10, SCORING_VERSION=12, WALLET_LEDGER_VERSION=2.
 on:
   push:
     branches: [main]
