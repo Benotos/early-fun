@@ -112,7 +112,7 @@ export function newCoin(p: {
     trades: 0,
     gf: 0,
     ser: [],
-    sres: 15,
+    sres: 1,
     capped: false,
     final: false,
     lastScan: 0,
@@ -135,7 +135,7 @@ export function applyTrades(s: CoinState, trades: Trade[], r: Rules): void {
       } else {
         const open = last ? last[1] : t.price; // candles open at the previous close, like a DEX chart
         ser.push([b, t.price, Math.max(open, t.price), open, Math.min(open, t.price)]);
-        if (ser.length > 3000) {
+        if (ser.length > 5000) {
           const merged: Bar[] = [];
           for (let i = 0; i < ser.length; i += 2) {
             const a = ser[i];
@@ -252,7 +252,7 @@ export function candleBins(s: CoinState, n: number): [number, number, number, nu
   const t0 = ser[0][0] * R;
   const t1 = ser[ser.length - 1][0] * R + R;
   // pick a round candle size that gives at most n candles, never finer than the stored buckets
-  const sizes = [15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400].filter((x) => x >= R);
+  const sizes = [1, 5, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400].filter((x) => x >= R);
   const step = sizes.find((x) => (t1 - t0) / x <= n) ?? sizes[sizes.length - 1];
   const out: [number, number, number, number, number][] = [];
   let prevClose = ser[0][3] ?? ser[0][1];

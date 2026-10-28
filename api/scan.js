@@ -35714,7 +35714,7 @@ function newCoin(p) {
     trades: 0,
     gf: 0,
     ser: [],
-    sres: 15,
+    sres: 1,
     capped: false,
     final: false,
     lastScan: 0
@@ -35735,7 +35735,7 @@ function applyTrades(s, trades, r) {
       } else {
         const open = last ? last[1] : t.price;
         ser.push([b, t.price, Math.max(open, t.price), open, Math.min(open, t.price)]);
-        if (ser.length > 3e3) {
+        if (ser.length > 5e3) {
           const merged = [];
           for (let i = 0; i < ser.length; i += 2) {
             const a = ser[i];

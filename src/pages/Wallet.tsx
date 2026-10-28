@@ -195,7 +195,7 @@ export default function Wallet() {
             {data.wins.length === 0 ? (
               <div className="panel empty">
                 <b>No qualifying early buys in the last 7 days.</b>
-                <span>A buy qualifies on a coin that migrated, after the first seconds, at 0.1 SOL or more, with the coin at least doubling after it.</span>
+                <span>A win needs a real sell: sold for at least 1.2x what the sold tokens cost, bought at 0.1 SOL or more, on a coin that passed the quality filter. Fresh coins can take 10 to 20 minutes to be read. To see the exact reason, open the coin page and use the check a wallet box.</span>
               </div>
             ) : (
               data.wins.map((e: RankedWin, i) => (

@@ -5,6 +5,8 @@ import { fmtUsd } from '../../shared/format';
 type Candle = [number, number, number, number, number];
 
 const TFS: { s: number; label: string }[] = [
+  { s: 1, label: '1s' },
+  { s: 5, label: '5s' },
   { s: 15, label: '15s' },
   { s: 60, label: '1m' },
   { s: 300, label: '5m' },
