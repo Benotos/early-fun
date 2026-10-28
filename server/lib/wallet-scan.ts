@@ -75,6 +75,7 @@ export function walletTradesFromTransactions(
 
     trades.push({
       sig: tx.transaction.signatures[0] || '',
+      mint: candidate.mint,
       slot: tx.slot,
       time: tx.blockTime ?? 0,
       wallet,
