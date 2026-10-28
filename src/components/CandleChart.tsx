@@ -39,6 +39,15 @@ function group(c: Candle[], step: number): Candle[] {
   return out;
 }
 
+const sameCandle = (a: Candle, b: Candle) => a.every((v, i) => v === b[i]);
+const asChartBar = ([t, open, high, low, close]: Candle) => ({
+  time: t as UTCTimestamp,
+  open,
+  high,
+  low,
+  close,
+});
+
 /** DEX style candlestick chart of market cap in USD. */
 export default function CandleChart({ candles: raw, mig }: { candles: Candle[]; mig: number }) {
   const base = baseRes(raw);
@@ -50,12 +59,18 @@ export default function CandleChart({ candles: raw, mig }: { candles: Candle[]; 
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const candlesRef = useRef<Candle[]>([]);
+  const previous = useRef<Candle[]>([]);
+  const previousStep = useRef<number | null>(null);
   const [log, setLog] = useState(true);
   const [hover, setHover] = useState<Candle | null>(null);
+  const showChart = raw.length >= 6 && candles.length >= 2;
 
+  // Create the chart once. Updating candles no longer destroys the chart or resets
+  // the user's zoom/scroll position on every refresh.
   useEffect(() => {
     const el = box.current;
-    if (!el || candles.length < 2) return;
+    if (!el || !showChart) return;
     const c = createChart(el, {
       width: el.clientWidth,
       height: el.clientHeight,
@@ -77,9 +92,64 @@ export default function CandleChart({ candles: raw, mig }: { candles: Candle[]; 
       priceLineColor: '#8b5cff',
       priceFormat: { type: 'custom', formatter: (p: number) => fmtUsd(p), minMove: 0.01 },
     });
-    s.setData(candles.map(([t, o, h, l, cl]) => ({ time: t as UTCTimestamp, open: o, high: h, low: l, close: cl })));
 
-    // markers: migration and the peak
+    c.subscribeCrosshairMove((p) => {
+      if (p.time === undefined) {
+        setHover(null);
+        return;
+      }
+      const time = p.time as number;
+      setHover(candlesRef.current.find((k) => k[0] === time) || null);
+    });
+    const ro = new ResizeObserver(() => c.applyOptions({ width: el.clientWidth, height: el.clientHeight }));
+    ro.observe(el);
+    chart.current = c;
+    series.current = s;
+
+    return () => {
+      ro.disconnect();
+      c.remove();
+      chart.current = null;
+      series.current = null;
+      candlesRef.current = [];
+      previous.current = [];
+      previousStep.current = null;
+      setHover(null);
+    };
+  }, [showChart, mig]);
+
+  // Apply new data in place. For normal live updates, update only the current
+  // candle and newly arrived candles. Fall back to setData if history/timeframe
+  // changed, preserving the visible range wherever possible.
+  useEffect(() => {
+    const c = chart.current;
+    const s = series.current;
+    if (!showChart || !c || !s) return;
+
+    const old = previous.current;
+    const sameStep = previousStep.current === step;
+    const appendOnly = sameStep &&
+      old.length > 0 &&
+      candles.length >= old.length &&
+      old.slice(0, Math.max(0, old.length - 1)).every((bar, i) => sameCandle(bar, candles[i]));
+
+    if (!old.length || !sameStep) {
+      const visible = old.length ? c.timeScale().getVisibleLogicalRange() : null;
+      s.setData(candles.map(asChartBar));
+      if (!old.length) c.timeScale().fitContent();
+      else if (visible) {
+        try { c.timeScale().setVisibleLogicalRange(visible); } catch { /* timeframe range may have changed */ }
+      }
+    } else if (appendOnly) {
+      for (let i = Math.max(0, old.length - 1); i < candles.length; i++) s.update(asChartBar(candles[i]));
+    } else {
+      const visible = c.timeScale().getVisibleLogicalRange();
+      s.setData(candles.map(asChartBar));
+      if (visible) {
+        try { c.timeScale().setVisibleLogicalRange(visible); } catch { /* changed history can invalidate a range */ }
+      }
+    }
+
     let peak = 0;
     candles.forEach((k, i) => {
       if (k[2] > candles[peak][2]) peak = i;
@@ -90,22 +160,10 @@ export default function CandleChart({ candles: raw, mig }: { candles: Candle[]; 
     markers.push({ time: candles[peak][0] as UTCTimestamp, position: 'aboveBar', color: '#3dffa2', shape: 'arrowDown', text: 'peak ' + fmtUsd(candles[peak][2]) });
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     s.setMarkers(markers);
-    c.timeScale().fitContent();
-
-    const byTime = new Map(candles.map((k) => [k[0], k]));
-    c.subscribeCrosshairMove((p) => setHover(p.time !== undefined ? byTime.get(p.time as number) || null : null));
-
-    const ro = new ResizeObserver(() => c.applyOptions({ width: el.clientWidth, height: el.clientHeight }));
-    ro.observe(el);
-    chart.current = c;
-    series.current = s;
-    return () => {
-      ro.disconnect();
-      c.remove();
-      chart.current = null;
-      series.current = null;
-    };
-  }, [candles, mig]);
+    candlesRef.current = candles;
+    previous.current = candles.map((bar) => [...bar] as Candle);
+    previousStep.current = step;
+  }, [candles, mig, showChart, step]);
 
   useEffect(() => {
     chart.current?.applyOptions({ rightPriceScale: { mode: log ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal } });
@@ -120,32 +178,18 @@ export default function CandleChart({ candles: raw, mig }: { candles: Candle[]; 
     <div className="cc">
       <div className="cc-bar mono">
         <span className="dim">{new Date(k[0] * 1000).toISOString().slice(5, 16).replace('T', ' ')} UTC</span>
-        <span>
-          O <b>{fmtUsd(k[1])}</b>
-        </span>
-        <span>
-          H <b className="win">{fmtUsd(k[2])}</b>
-        </span>
-        <span>
-          L <b className="loss">{fmtUsd(k[3])}</b>
-        </span>
-        <span>
-          C <b className={up ? 'win' : 'loss'}>{fmtUsd(k[4])}</b>
-        </span>
+        <span>O <b>{fmtUsd(k[1])}</b></span>
+        <span>H <b className="win">{fmtUsd(k[2])}</b></span>
+        <span>L <b className="loss">{fmtUsd(k[3])}</b></span>
+        <span>C <b className={up ? 'win' : 'loss'}>{fmtUsd(k[4])}</b></span>
         <span className="cc-tog">
           {usable.map((x) => (
-            <button key={x.s} className={step === x.s ? 'on' : ''} onClick={() => setTf(x.s)}>
-              {x.label}
-            </button>
+            <button key={x.s} className={step === x.s ? 'on' : ''} onClick={() => setTf(x.s)}>{x.label}</button>
           ))}
         </span>
         <span className="cc-tog cc-tog2">
-          <button className={log ? 'on' : ''} onClick={() => setLog(true)}>
-            log
-          </button>
-          <button className={!log ? 'on' : ''} onClick={() => setLog(false)}>
-            linear
-          </button>
+          <button className={log ? 'on' : ''} onClick={() => setLog(true)}>log</button>
+          <button className={!log ? 'on' : ''} onClick={() => setLog(false)}>linear</button>
         </span>
       </div>
       <div className="cc-box" ref={box} />
