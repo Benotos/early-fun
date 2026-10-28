@@ -1,0 +1,57 @@
+name: backfill wallet ledgers
+
+# One-time backfill trigger: adding or editing this workflow on main starts a
+# normal scanner window that replays existing coin history into per-wallet ledgers.
+# It shares the regular scan concurrency group so two workers never scan at once.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/backfill-wallet-ledgers.yml'
+  workflow_dispatch:
+
+concurrency: { group: scan, cancel-in-progress: false }
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 58
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/build-api.mjs
+      - run: node scripts/worker.cjs
+        env:
+          WORKER_MINUTES: 56
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          SITE_URL: ${{ vars.SITE_URL }}
+          BLOCKED_MINTS: ${{ vars.BLOCKED_MINTS }}
+          BACKFILL_DAYS: ${{ vars.BACKFILL_DAYS }}
+          BOARD_SIZE: ${{ vars.BOARD_SIZE }}
+          HIDE_MAYHEM: ${{ vars.HIDE_MAYHEM }}
+          LOSS_CAP_PCT: ${{ vars.LOSS_CAP_PCT }}
+          MAX_PER_COIN: ${{ vars.MAX_PER_COIN }}
+          MAX_WALLET_TRADES: ${{ vars.MAX_WALLET_TRADES }}
+          MIN_BUY_SOL: ${{ vars.MIN_BUY_SOL }}
+          MIN_COIN_TRADES: ${{ vars.MIN_COIN_TRADES }}
+          MIN_COIN_WALLETS: ${{ vars.MIN_COIN_WALLETS }}
+          MIN_CURVE_MC_SOL: ${{ vars.MIN_CURVE_MC_SOL }}
+          MIN_ENTRY_MC_SOL: ${{ vars.MIN_ENTRY_MC_SOL }}
+          MIN_GLOBAL_FEES_SOL: ${{ vars.MIN_GLOBAL_FEES_SOL }}
+          MIN_HOLD_SECONDS: ${{ vars.MIN_HOLD_SECONDS }}
+          MIN_LOSS_SOL: ${{ vars.MIN_LOSS_SOL }}
+          MIN_REALIZED_MULT: ${{ vars.MIN_REALIZED_MULT }}
+          PAYOUT_WEIGHTS: ${{ vars.PAYOUT_WEIGHTS }}
+          SKIP_SLOTS: ${{ vars.SKIP_SLOTS }}
+          WINNERS_SHARE: ${{ vars.WINNERS_SHARE }}
+          WIN_MODE: ${{ vars.WIN_MODE }}
+          WIN_REQUIRE_SELL: ${{ vars.WIN_REQUIRE_SELL }}
