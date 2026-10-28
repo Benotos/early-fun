@@ -24,7 +24,7 @@ export default route(async ({ q, ip }) => {
   const store = getStore();
   if (await limited(store, 'wallet:' + ip, 60, 60)) throw new HttpError(429, 'rate_limited', 'Slow down a little');
 
-  const cacheKey = `wallet:pnl:v5:${address}`;
+  const cacheKey = `wallet:pnl:v6:${address}`;
   const cached = parse<WalletResponse>(await store.get(cacheKey));
   if (cached?.ok && cached.address === address) return { json: cached, cache: 'public, s-maxage=15, stale-while-revalidate=30' };
 
