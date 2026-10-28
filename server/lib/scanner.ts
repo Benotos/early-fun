@@ -350,7 +350,7 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
       if (Date.now() > deadline - 3000) break;
       const s = await loadCoin(store, q.mint);
       if (!s) {
-        await store.cmd('HSET', K.idx(q.day), q.mint, `f|${RULES_VERSION}`);
+        await store.cmd('HSET', K.idx(q.day), q.mint, `f|${RULES_VERSION}|${SCORING_VERSION}`);
         continue;
       }
       const needsReplay = s.rv !== RULES_VERSION;
