@@ -1,10 +1,12 @@
 import { addDays, dayKey, isSolAddress } from '../../shared/format';
 import { LossEntry, RankedLoss, RankedWin, WalletResponse, WinEntry } from '../../shared/types';
 import { K } from '../lib/boards';
+import { HeliusChain, RawTx } from '../lib/chain';
 import { HttpError, limited, route } from '../lib/http';
 import { rules } from '../lib/env';
-import { WalletCoinLedger, unpackState } from '../lib/coin';
+import { applyWalletLedgerTrades, CoinState, newCoin, WalletCoinLedger, unpackState } from '../lib/coin';
 import { junkReasons, realizedOf } from '../lib/scoring';
+import { walletTradesFromTransactions } from '../lib/wallet-scan';
 import { getStore } from '../lib/store';
 
 function parse<T>(raw: unknown): T | null {
@@ -21,7 +23,7 @@ export default route(async ({ q, ip }) => {
   const store = getStore();
   if (await limited(store, 'wallet:' + ip, 60, 60)) throw new HttpError(429, 'rate_limited', 'Slow down a little');
 
-  const cacheKey = `wallet:pnl:v4:${address}`;
+  const cacheKey = `wallet:pnl:v5:${address}`;
   const cached = parse<WalletResponse>(await store.get(cacheKey));
   if (cached?.ok && cached.address === address) return { json: cached, cache: 'public, s-maxage=15, stale-while-revalidate=30' };
 
@@ -79,6 +81,7 @@ export default route(async ({ q, ip }) => {
     }
   }
 
+  const stateByMint = new Map<string, CoinState>();
   const solPrice = Number(parse<{ p?: number }>(await store.get('solusd'))?.p)
     || Number(parse<{ solUsd?: number }>(await store.get(K.board(today)))?.solUsd)
     || 0;
@@ -103,6 +106,7 @@ export default route(async ({ q, ip }) => {
           try {
             const state = unpackState(raw);
             if (!days.includes(state.day)) return;
+            stateByMint.set(mint, state);
             const storedLedger = parse<WalletCoinLedger>(batch.ledgers[index]);
             const p = storedLedger?.pnl || state.pnl[address];
             const buys = storedLedger?.buys || state.buys[address] || [];
@@ -115,7 +119,7 @@ export default route(async ({ q, ip }) => {
             if (junkReasons(walletState, r).length) return;
             const x = realizedOf(walletState, address);
             if (!x || !Number.isFinite(x.pnl) || Math.abs(x.pnl) < 0.00005) return;
-            const key = coinKey(state.day, mint);
+            const key = coinKey(profileState.day, mint);
 
             if (x.pnl > 0) {
               if (x.mult < r.minRealizedMult || x.buyMc < r.minEntryMcSol) return;
@@ -171,6 +175,124 @@ export default route(async ({ q, ip }) => {
         });
       }
     }
+
+  // If either side is empty, do a bounded on-demand scan of the wallet's
+  // own recent transactions and reconstruct trades for coins EARLY.FUN knows.
+  // This avoids making a wallet profile depend entirely on the background ledger
+  // backfill. Results remain limited to the same seven-day window and known coins.
+  if ((!winByCoin.size || !lossByCoin.size) && mints.length) {
+    try {
+      const chain = new HeliusChain();
+      const scanDeadline = Date.now() + 8500;
+      (chain as unknown as { setDeadline?: (t: number) => void }).setDeadline?.(scanDeadline);
+      const since = Math.floor(Date.now() / 1000) - 7 * 86400;
+      const transactions: RawTx[] = [];
+      let token: string | null = null;
+      for (let pageNo = 0; pageNo < 5 && Date.now() < scanDeadline - 1000; pageNo++) {
+        const page = await chain.txsForAddress(address, { sort: 'desc', limit: 1000, token });
+        if (!page.txs.length) break;
+        transactions.push(...page.txs.filter((tx) => (tx.blockTime ?? 0) >= since));
+        const reachedWindowStart = page.txs.some((tx) => (tx.blockTime ?? 0) < since);
+        if (!page.next || reachedWindowStart) break;
+        token = page.next;
+      }
+
+      const directTrades = walletTradesFromTransactions(address, transactions, new Set(mints), since);
+      const tradesByMint = new Map<string, typeof directTrades>();
+      for (const trade of directTrades) {
+        const list = tradesByMint.get(trade.mint || '') || [];
+        list.push(trade);
+        tradesByMint.set(trade.mint || '', list);
+      }
+
+      for (const [mint, trades] of tradesByMint) {
+        const metadataState = stateByMint.get(mint);
+        if (!metadataState && !mint.endsWith('pump')) continue;
+        const firstTime = trades.find((trade) => trade.side === 'buy')?.time || trades[0]?.time || since;
+        const lastTime = Math.max(...trades.map((trade) => trade.time));
+        const profileDay = dayKey(firstTime);
+        const profileState: CoinState = {
+          ...(metadataState || newCoin({
+            mint,
+            curve: '',
+            pool: null,
+            migTime: firstTime,
+            migSig: '',
+            day: profileDay,
+            dayEnd: Math.max(Math.floor(firstTime / 86400) * 86400 + 86400, lastTime + 1),
+            symbol: mint.slice(0, 4).toUpperCase(),
+          })),
+          // Wallet P/L covers the full seven-day window, even when the token's
+          // original board day has ended.
+          day: profileDay,
+          dayEnd: Math.max(Math.floor(firstTime / 86400) * 86400 + 86400, lastTime + 1),
+        };
+        if (!days.includes(profileState.day)) continue;
+        const state = metadataState || profileState;
+        const ledger: WalletCoinLedger = {
+          pnl: {
+            bs: 0, ss: 0, bt: 0, st: 0, fb: 0, lb: 0, ls: 0,
+            inventoryTokens: 0, inventoryCostSol: 0,
+            matchedSoldTokens: 0, matchedSoldCostSol: 0, matchedSoldProceedsSol: 0,
+          },
+          buys: [],
+        };
+        applyWalletLedgerTrades(profileState, ledger, trades, r);
+        const walletState: CoinState = {
+          ...profileState,
+          pnl: { ...state.pnl, [address]: ledger.pnl },
+          buys: { ...state.buys, [address]: ledger.buys },
+        };
+        const x = realizedOf(walletState, address);
+        if (!x || !Number.isFinite(x.pnl) || Math.abs(x.pnl) < 0.00005) continue;
+        const key = coinKey(state.day, mint);
+
+        if (x.pnl > 0 && !winByCoin.has(key)) {
+          const firstBuy = ledger.buys[0];
+          winByCoin.set(key, {
+            wallet: address,
+            mint,
+            symbol: state.symbol || mint.slice(0, 4).toUpperCase(),
+            entryMcUsd: x.buyMc * solPrice,
+            peakMcUsd: x.sellMc * solPrice,
+            mult: x.mult,
+            buySol: x.cost,
+            buyTime: ledger.pnl.fb || firstBuy?.time || state.migTime,
+            sig: firstBuy?.sig || '',
+            day: profileState.day,
+            pnlSol: solRound(x.pnl),
+            inSol: solRound(x.cost),
+            outSol: solRound(x.proceeds),
+            holding: false,
+            realized: true,
+            rank: 0,
+            total: 0,
+            onBoard: false,
+          });
+        } else if (x.pnl < 0 && !lossByCoin.has(key)) {
+          lossByCoin.set(key, {
+            wallet: address,
+            mint,
+            symbol: state.symbol || mint.slice(0, 4).toUpperCase(),
+            buyMcUsd: x.buyMc * solPrice,
+            sellMcUsd: x.sellMc * solPrice,
+            lossSol: solRound(-x.pnl),
+            lossPct: (-x.pnl / x.cost) * 100,
+            buySol: x.cost,
+            sellSol: x.proceeds,
+            lastSellTime: ledger.pnl.ls || ledger.pnl.lb || state.migTime,
+            day: profileState.day,
+            rank: 0,
+            total: 0,
+            onBoard: false,
+          });
+        }
+      }
+    } catch {
+      // Keep existing indexed results available when the on-demand RPC scan
+      // cannot complete within the serverless time budget.
+    }
+  }
 
   const finalWins = [...winByCoin.values()]
     .sort((a, b) => {
