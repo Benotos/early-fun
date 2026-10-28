@@ -6,7 +6,7 @@ import { HttpError, limited, route } from '../lib/http';
 import { rules } from '../lib/env';
 import { applyWalletLedgerTrades, CoinState, newCoin, WalletCoinLedger, unpackState } from '../lib/coin';
 import { junkReasons, realizedOf } from '../lib/scoring';
-import { walletTradesFromTransactions } from '../lib/wallet-scan';
+import { needsTickerLookup, resolveWalletTicker, walletTradesFromTransactions } from '../lib/wallet-scan';
 import { getStore } from '../lib/store';
 
 function parse<T>(raw: unknown): T | null {
@@ -18,12 +18,13 @@ const coinKey = (day: string, mint: string) => `${day}|${mint}`;
 const solRound = (value: number) => Math.round(value * 1e4) / 1e4;
 
 export default route(async ({ q, ip }) => {
+  const routeStartedAt = Date.now();
   const address = (q.get('address') || '').trim();
   if (!isSolAddress(address)) throw new HttpError(400, 'bad_address', 'That is not a valid Solana wallet address');
   const store = getStore();
   if (await limited(store, 'wallet:' + ip, 60, 60)) throw new HttpError(429, 'rate_limited', 'Slow down a little');
 
-  const cacheKey = `wallet:pnl:v5:${address}`;
+  const cacheKey = `wallet:pnl:v6:${address}`;
   const cached = parse<WalletResponse>(await store.get(cacheKey));
   if (cached?.ok && cached.address === address) return { json: cached, cache: 'public, s-maxage=15, stale-while-revalidate=30' };
 
@@ -180,7 +181,7 @@ export default route(async ({ q, ip }) => {
   // own recent transactions and reconstruct trades for coins EARLY.FUN knows.
   // This avoids making a wallet profile depend entirely on the background ledger
   // backfill. Results remain limited to the same seven-day window and known coins.
-  if ((!winByCoin.size || !lossByCoin.size) && mints.length) {
+  if (!winByCoin.size || !lossByCoin.size) {
     try {
       const chain = new HeliusChain();
       const scanDeadline = Date.now() + 8500;
@@ -292,6 +293,52 @@ export default route(async ({ q, ip }) => {
       // Keep existing indexed results available when the on-demand RPC scan
       // cannot complete within the serverless time budget.
     }
+  }
+
+  // Replace fallback mint fragments with real token metadata. Cache known
+  // symbols so profiles with the same token do not repeatedly hit the RPC.
+  const allEntries = [...winByCoin.values(), ...lossByCoin.values()];
+  const unresolvedMints = [...new Set(allEntries
+    .filter((entry) => needsTickerLookup(entry.symbol, entry.mint))
+    .map((entry) => entry.mint))];
+  const metaCacheRows = unresolvedMints.length
+    ? await store.run(unresolvedMints.map((mint) => ['GET', `ticker:${mint}`]))
+    : [];
+  const symbolByMint = new Map<string, string>();
+  const toFetch: string[] = [];
+  unresolvedMints.forEach((mint, index) => {
+    const cachedSymbol = typeof metaCacheRows[index] === 'string' ? String(metaCacheRows[index]) : '';
+    if (cachedSymbol && !needsTickerLookup(cachedSymbol, mint)) symbolByMint.set(mint, cachedSymbol);
+    else toFetch.push(mint);
+  });
+
+  // Keep metadata RPC requests bounded inside the serverless response budget.
+  if (toFetch.length && toFetch.length > 0) {
+    try {
+      const availableMs = Math.max(0, 9000 - (Date.now() - routeStartedAt));
+      const metadataChain = new HeliusChain();
+      const canFetch = availableMs > 1800;
+      if (canFetch) metadataChain.setDeadline(Date.now() + Math.min(3500, availableMs - 300));
+      const lookups = canFetch ? toFetch.slice(0, 12) : [];
+      const resolved = await Promise.all(lookups.map(async (mint) => [mint, await metadataChain.tokenMeta(mint)] as const));
+      const save: [string, string][] = [];
+      for (const [mint, meta] of resolved) {
+        if (!meta?.symbol || needsTickerLookup(meta.symbol, mint)) continue;
+        const symbol = resolveWalletTicker(mint, undefined, meta.symbol);
+        symbolByMint.set(mint, symbol);
+        save.push([`ticker:${mint}`, symbol]);
+      }
+      if (save.length) await store.run(save.map(([key, value]) => ['SET', key, value]));
+    } catch {
+      // Show UNKNOWN rather than exposing a mint address if metadata is unavailable.
+    }
+  }
+
+  for (const [key, entry] of winByCoin) {
+    winByCoin.set(key, { ...entry, symbol: resolveWalletTicker(entry.mint, entry.symbol, symbolByMint.get(entry.mint)) });
+  }
+  for (const [key, entry] of lossByCoin) {
+    lossByCoin.set(key, { ...entry, symbol: resolveWalletTicker(entry.mint, entry.symbol, symbolByMint.get(entry.mint)) });
   }
 
   const finalWins = [...winByCoin.values()]

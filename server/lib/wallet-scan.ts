@@ -99,3 +99,34 @@ export function walletTradesFromTransactions(
 
   return trades;
 }
+
+
+/** True when a stored symbol is just a mint-address fallback, not a ticker. */
+export function needsTickerLookup(symbol: string | null | undefined, mint: string): boolean {
+  const value = (symbol || '').trim();
+  if (!value || value === mint) return true;
+  if (value.toUpperCase() === mint.slice(0, 4).toUpperCase()) return true;
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value);
+}
+
+/** Resolve to real metadata where possible; never display a mint address as a ticker. */
+export function resolveWalletTicker(
+  mint: string,
+  existing: string | null | undefined,
+  metadata: string | null | undefined,
+): string {
+  // A metadata API result is authoritative, even if its real ticker coincidentally
+  // matches the first four characters of the mint.
+  const meta = (metadata || '').trim();
+  if (meta && meta !== mint && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(meta)) {
+    return meta.toUpperCase().slice(0, 12);
+  }
+  const value = (existing || '').trim();
+  if (
+    value &&
+    value !== mint &&
+    value.toUpperCase() !== mint.slice(0, 4).toUpperCase() &&
+    !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)
+  ) return value.toUpperCase().slice(0, 12);
+  return 'UNKNOWN';
+}
