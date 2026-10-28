@@ -70,6 +70,8 @@ export interface CoinState {
   rv?: number;
   /** score version this state was last published under; can be upgraded without replaying chain history */
   sv?: number;
+  /** version of independent per-wallet trade ledgers */
+  lv?: number;
   /** Existing published result is retained until the bonding curve has been replayed. */
   rebuildPending?: boolean;
   /** Bypasses age based scan backoff until a historical accounting replay is final. */
