@@ -3,8 +3,8 @@ import { LossEntry, RankedLoss, RankedWin, WalletResponse, WinEntry } from '../.
 import { K } from '../lib/boards';
 import { HttpError, limited, route } from '../lib/http';
 import { rules } from '../lib/env';
-import { unpackState } from '../lib/coin';
-import { realizedOf } from '../lib/scoring';
+import { WalletCoinLedger, unpackState } from '../lib/coin';
+import { junkReasons, realizedOf } from '../lib/scoring';
 import { getStore } from '../lib/store';
 
 function parse<T>(raw: unknown): T | null {
@@ -88,12 +88,14 @@ export default route(async ({ q, ip }) => {
   const groups: string[][] = [];
   for (let i = 0; i < mints.length; i += BATCH_SIZE) groups.push(mints.slice(i, i + BATCH_SIZE));
 
-  if (solPrice > 0) {
-    for (let i = 0; i < groups.length; i += CONCURRENCY) {
-      const batches = await Promise.all(groups.slice(i, i + CONCURRENCY).map(async (group) => ({
-        group,
-        values: await store.cmd('MGET', ...group.map(K.coin)) as unknown[],
-      })));
+  for (let i = 0; i < groups.length; i += CONCURRENCY) {
+      const batches = await Promise.all(groups.slice(i, i + CONCURRENCY).map(async (group) => {
+        const [values, ledgers] = await Promise.all([
+          store.cmd('MGET', ...group.map(K.coin)) as Promise<unknown[]>,
+          store.run(group.map((mint) => ['HGET', K.walletCoin(mint), address])),
+        ]);
+        return { group, values, ledgers };
+      }));
       for (const batch of batches) {
         batch.group.forEach((mint, index) => {
           const raw = batch.values[index];
@@ -101,16 +103,24 @@ export default route(async ({ q, ip }) => {
           try {
             const state = unpackState(raw);
             if (!days.includes(state.day)) return;
-            const p = state.pnl[address];
+            const storedLedger = parse<WalletCoinLedger>(batch.ledgers[index]);
+            const p = storedLedger?.pnl || state.pnl[address];
+            const buys = storedLedger?.buys || state.buys[address] || [];
             if (!p || p.sn || address === state.dev || (p.n || 0) > r.maxWalletTrades || p.bs < r.minBuySol) return;
-            const x = realizedOf(state, address);
+            // Use the complete per-wallet ledger when the compact coin state
+            // pruned this wallet to stay under its storage size cap.
+            const walletState = storedLedger
+              ? { ...state, pnl: { ...state.pnl, [address]: p }, buys: { ...state.buys, [address]: buys } }
+              : state;
+            if (junkReasons(walletState, r).length) return;
+            const x = realizedOf(walletState, address);
             if (!x || !Number.isFinite(x.pnl) || Math.abs(x.pnl) < 0.00005) return;
             const key = coinKey(state.day, mint);
 
             if (x.pnl > 0) {
               if (x.mult < r.minRealizedMult || x.buyMc < r.minEntryMcSol) return;
               if (winByCoin.has(key)) return;
-              const firstBuy = state.buys[address]?.[0];
+              const firstBuy = buys[0];
               winByCoin.set(key, {
                 wallet: address,
                 mint,
@@ -134,10 +144,8 @@ export default route(async ({ q, ip }) => {
               return;
             }
 
-            const soldRatio = p.bt > 0
-              ? (typeof p.matchedSoldTokens === 'number' ? p.matchedSoldTokens : Math.min(p.bt, p.st)) / p.bt
-              : 0;
-            if (soldRatio < 0.9 || soldRatio > 1.02 || p.ls - p.lb < r.minHoldSeconds) return;
+            const soldRatio = p.bt > 0 ? p.st / p.bt : 0;
+            if (soldRatio < 0.98 || soldRatio > 1.02 || p.ls - p.lb < r.minHoldSeconds) return;
             const lossSol = -x.pnl;
             if (lossSol < r.minLossSol) return;
             if (lossByCoin.has(key)) return;
@@ -163,7 +171,6 @@ export default route(async ({ q, ip }) => {
         });
       }
     }
-  }
 
   const finalWins = [...winByCoin.values()]
     .sort((a, b) => {
