@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RawTx, TokenBalance } from '../server/lib/chain';
+import { parseMetaplexMetadata, RawTx, TokenBalance } from '../server/lib/chain';
 import { WSOL } from '../server/lib/env';
 import { needsTickerLookup, pumpTickerFromResponse, resolveWalletTicker, walletTradesFromTransactions } from '../server/lib/wallet-scan';
 import { fakeKey } from '../server/testing/fakechain';
@@ -99,6 +99,18 @@ describe('wallet on-demand transaction scan', () => {
     const trades = walletTradesFromTransactions(wallet, [tx], new Set(), 0);
     expect(trades).toHaveLength(1);
     expect(trades[0].mint).toBe(mint);
+  });
+
+  it('parses on-chain Metaplex name and symbol strings', () => {
+    const name = Buffer.from('Real Token');
+    const symbol = Buffer.from('REAL');
+    const nameLength = Buffer.alloc(4);
+    nameLength.writeUInt32LE(name.length);
+    const symbolLength = Buffer.alloc(4);
+    symbolLength.writeUInt32LE(symbol.length);
+    const data = Buffer.concat([Buffer.alloc(65), nameLength, name, symbolLength, symbol]);
+    expect(parseMetaplexMetadata(data)).toEqual({ name: 'Real Token', symbol: 'REAL' });
+    expect(parseMetaplexMetadata(Buffer.alloc(20))).toBeNull();
   });
 
   it('extracts tickers from Pump.fun metadata responses', () => {
