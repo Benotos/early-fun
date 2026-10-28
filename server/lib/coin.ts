@@ -66,8 +66,10 @@ export interface CoinState {
   gf?: number;
   /** pump.fun Mayhem Mode coin (undefined until checked) */
   mh?: boolean;
-  /** rules version this state was last scored under */
+  /** rules version this state was last replayed under */
   rv?: number;
+  /** score version this state was last published under; can be upgraded without replaying chain history */
+  sv?: number;
   /** Existing published result is retained until the bonding curve has been replayed. */
   rebuildPending?: boolean;
   /** Bypasses age based scan backoff until a historical accounting replay is final. */
