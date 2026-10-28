@@ -89,7 +89,9 @@ export default route(async ({ q }) => {
     winners,
     losers,
   };
-  return { json: body, cache: 'public, s-maxage=20, stale-while-revalidate=120' };
+  // The chart page polls this endpoint while it is open. Serve the newest
+  // scanner state instead of pinning an old candle response at the edge.
+  return { json: body, cache: 'no-store' };
 });
 
 /** Rule by rule answer to "why is (or isn't) this wallet on the board for this coin". */
