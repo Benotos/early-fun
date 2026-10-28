@@ -18,6 +18,7 @@ const coinKey = (day: string, mint: string) => `${day}|${mint}`;
 const solRound = (value: number) => Math.round(value * 1e4) / 1e4;
 
 export default route(async ({ q, ip }) => {
+  const routeStartedAt = Date.now();
   const address = (q.get('address') || '').trim();
   if (!isSolAddress(address)) throw new HttpError(400, 'bad_address', 'That is not a valid Solana wallet address');
   const store = getStore();
@@ -314,11 +315,11 @@ export default route(async ({ q, ip }) => {
   // Keep metadata RPC requests bounded inside the serverless response budget.
   if (toFetch.length && toFetch.length > 0) {
     try {
+      const availableMs = Math.max(0, 9000 - (Date.now() - routeStartedAt));
       const metadataChain = new HeliusChain();
-      const requestStartedAt = Date.now();
-      const availableMs = Math.max(0, 9500 - (requestStartedAt % 9500));
-      metadataChain.setDeadline(Date.now() + Math.max(1600, Math.min(3500, availableMs || 2500)));
-      const lookups = toFetch.slice(0, 12);
+      const canFetch = availableMs > 1800;
+      if (canFetch) metadataChain.setDeadline(Date.now() + Math.min(3500, availableMs - 300));
+      const lookups = canFetch ? toFetch.slice(0, 12) : [];
       const resolved = await Promise.all(lookups.map(async (mint) => [mint, await metadataChain.tokenMeta(mint)] as const));
       const save: [string, string][] = [];
       for (const [mint, meta] of resolved) {
