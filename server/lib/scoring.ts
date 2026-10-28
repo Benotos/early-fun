@@ -42,7 +42,7 @@ export interface CoinResult {
   fin: boolean;
   /** coin failed the quality gate, kept off boards and coin lists */
   jk?: 1;
-  /** global fees paid, SOL */
+  /** estimated Pump.fun global/protocol fees generated, SOL */
   gf?: number;
   /** migration time, peak market cap in SOL, trades seen, sparkline */
   mig: number;
@@ -236,7 +236,7 @@ export function junkReasons(s: CoinState, r: Rules): string[] {
   }
   if (s.curveDone && cpk * TOTAL_SUPPLY < r.minCurveMcSol) why.push(`bonding curve only reached ${Math.round(cpk * TOTAL_SUPPLY)} SOL market cap, a real migration ends near 410`);
   if (s.mh && r.hideMayhem) why.push('pump.fun Mayhem Mode coin');
-  if (s.gf !== undefined && s.gf < r.minGlobalFeesSol) why.push(`traders paid ${s.gf.toFixed(2)} SOL in global fees, minimum is ${r.minGlobalFeesSol}`);
+  if (s.gf !== undefined && s.gf < r.minGlobalFeesSol) why.push(`estimated Pump.fun global fees are ${s.gf.toFixed(2)} SOL, minimum is ${r.minGlobalFeesSol}`);
   if (s.trades < r.minCoinTrades) why.push(`only ${s.trades} trades, minimum is ${r.minCoinTrades}`);
   const wallets = new Set([...Object.keys(s.pnl), ...Object.keys(s.buys)]).size;
   if (wallets < r.minCoinWallets) why.push(`only ${wallets} wallets traded it, minimum is ${r.minCoinWallets}`);
