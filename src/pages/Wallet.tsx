@@ -68,7 +68,8 @@ export default function Wallet() {
   const nav = useNavigate();
 
   const stats = useMemo(() => (data ? walletStats(data) : null), [data]);
-  const tier = stats ? tierFor(stats.bestWin?.mult ?? 0, stats.bestLoss?.lossSol ?? 0) : null;
+  const bestEntryMult = Math.max(0, ...(data?.wins || []).map((x) => x.mult));
+  const tier = stats ? tierFor(bestEntryMult, stats.bestLoss?.lossSol ?? 0) : null;
   const ltag = stats?.bestLoss ? lossTag(stats.bestLoss.lossSol) : null;
 
   useEffect(() => {
@@ -165,9 +166,117 @@ export default function Wallet() {
           <>
             <div className="stats">
               <div className="stat">
-                <span className="stat-k mono">Best entry</span>
-                <b className="stat-v mono win">{stats.bestWin ? <CountUp value={stats.bestWin.mult} format={fmtMult} /> : '-'}</b>
-                <span className="stat-s dim">{stats.bestWin ? '$' + stats.bestWin.symbol.toUpperCase() : 'none in 7 days'}</span>
+                <span className="stat-k mono">Best win</span>
+                <b className="stat-v mono win">
+                  {stats.bestWin ? stats.bestWin.realized && stats.bestWin.pnlSol !== undefined ? <>+<CountUp value={stats.bestWin.pnlSol} format={fmtSol} /> SOL</> : <CountUp value={stats.bestWin.mult} format={fmtMult} /> : '-'}
+                </b>
+                <span className="stat-s dim">
+                  {stats.bestWin ? '
+              </div>
+              <div className="stat">
+                <span className="stat-k mono">Days with a win</span>
+                <b className="stat-v mono">{stats.winDays}<small>/7</small></b>
+                <span className="stat-s dim">{data.wins.length} qualifying buys</span>
+              </div>
+              <div className="stat">
+                <span className="stat-k mono">Biggest loss</span>
+                <b className="stat-v mono loss">{stats.bestLoss ? <>-<CountUp value={stats.bestLoss.lossSol} format={fmtSol} /> SOL</> : '-'}</b>
+                <span className="stat-s dim">{stats.bestLoss ? '$' + stats.bestLoss.symbol.toUpperCase() : 'none in 7 days'}</span>
+              </div>
+              <div className="stat">
+                <span className="stat-k mono">On the boards</span>
+                <b className="stat-v mono">{stats.boardCount}</b>
+                <span className="stat-s dim">verified entries</span>
+              </div>
+            </div>
+
+            <div className="panel pad act-panel">
+              <div className="act-h mono small dim">LAST 7 DAYS · <span className="win">best entry</span> above, <span className="loss">biggest loss</span> below</div>
+              <Activity wins={data.wins} losses={data.losses} />
+            </div>
+
+            <h3 className="sub-h win-h">Early buys</h3>
+            {data.wins.length === 0 ? (
+              <div className="panel empty">
+                <b>No qualifying early buys in the last 7 days.</b>
+                <span>A win needs a real sell: sold for at least 1.2x what the sold tokens cost, bought at 0.1 SOL or more, on a coin that passed the quality filter. Fresh coins can take 10 to 20 minutes to be read. To see the exact reason, open the coin page and use the check a wallet box.</span>
+              </div>
+            ) : (
+              data.wins.map((e: RankedWin, i) => (
+                <div className="entry rise" style={stagger(i)} key={e.day + e.mint}>
+                  <div className="entry-top">
+                    <span className="mono dim small">{dayLabel(e.day)}</span>
+                    <Badge onBoard={e.onBoard} rank={e.rank} total={e.total} />
+                  </div>
+                  <div className="entry-main">
+                    <Link className="sym big" to={`/c/${e.mint}`}>
+                      ${e.symbol.toUpperCase()}
+                    </Link>
+                    <div className="mv mono">
+                      <span className="dim">bought</span> {fmtUsd(e.entryMcUsd)} <span className="arr">→</span> {e.realized && <span className="dim">sold </span>}<span className="win">{fmtUsd(e.peakMcUsd)}</span>
+                    </div>
+                    <div className="sc mono win">
+                      {fmtMult(e.mult)}
+                      <small className={winSol(e).cls}>{winSol(e).text}</small>
+                    </div>
+                  </div>
+                  <div className="entry-btns">
+                    <button className="btn" onClick={() => { play('click'); setShare({ type: 'win', entry: e }); }}>
+                      <ShareIcon /> Share card
+                    </button>
+                    <a className="btn" href={pumpUrl(e.mint)} target="_blank" rel="noopener noreferrer">
+                      pump.fun <ExternalIcon />
+                    </a>
+                  </div>
+                </div>
+              ))
+            )}
+
+            <h3 className="sub-h loss-h">Losses</h3>
+            {data.losses.length === 0 ? (
+              <div className="panel empty">
+                <b>No qualifying losses in the last 7 days.</b>
+                <span>A loss qualifies on a coin you fully exited, held for a few minutes, with at least 0.1 SOL lost.</span>
+              </div>
+            ) : (
+              data.losses.map((e: RankedLoss, i) => (
+                <div className="entry rise" style={stagger(i)} key={e.day + e.mint}>
+                  <div className="entry-top">
+                    <span className="mono dim small">{dayLabel(e.day)}</span>
+                    <Badge onBoard={e.onBoard} rank={e.rank} total={e.total} />
+                  </div>
+                  <div className="entry-main">
+                    <Link className="sym big" to={`/c/${e.mint}`}>
+                      ${e.symbol.toUpperCase()}
+                    </Link>
+                    <div className="mv mono">
+                      <span className="dim">bought</span> {fmtUsd(e.buyMcUsd)} <span className="arr">→</span> <span className="dim">sold</span> <span className="loss">{fmtUsd(e.sellMcUsd)}</span>
+                    </div>
+                    <div className="sc mono loss">
+                      -{fmtPct(e.lossPct)}
+                      <small className="loss">{lossSolText(e)}</small>
+                    </div>
+                  </div>
+                  <div className="entry-btns">
+                    <button className="btn" onClick={() => { play('click'); setShare({ type: 'loss', entry: e }); }}>
+                      <ShareIcon /> Share card
+                    </button>
+                    <a className="btn" href={pumpUrl(e.mint)} target="_blank" rel="noopener noreferrer">
+                      pump.fun <ExternalIcon />
+                    </a>
+                  </div>
+                </div>
+              ))
+            )}
+            <p className="dim small foot-note">Boards refresh every few minutes. Today is final at 00:00 UTC.</p>
+          </>
+        )}
+      </div>
+      {share && <ShareModal target={share} onClose={() => setShare(null)} />}
+    </section>
+  );
+} + stats.bestWin.symbol.toUpperCase() + (stats.bestWin.realized ? ' · +' + fmtPct(Math.max(0, (stats.bestWin.mult - 1) * 100)) : '') : 'none in 7 days'}
+                </span>
               </div>
               <div className="stat">
                 <span className="stat-k mono">Days with a win</span>
