@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { RawTx, TokenBalance } from '../server/lib/chain';
 import { WSOL } from '../server/lib/env';
-import { needsTickerLookup, resolveWalletTicker, walletTradesFromTransactions } from '../server/lib/wallet-scan';
+import { needsTickerLookup, pumpTickerFromResponse, resolveWalletTicker, walletTradesFromTransactions } from '../server/lib/wallet-scan';
 import { fakeKey } from '../server/testing/fakechain';
 
 function balance(accountIndex: number, mint: string, owner: string, amount: number, decimals: number): TokenBalance {
@@ -99,6 +99,13 @@ describe('wallet on-demand transaction scan', () => {
     const trades = walletTradesFromTransactions(wallet, [tx], new Set(), 0);
     expect(trades).toHaveLength(1);
     expect(trades[0].mint).toBe(mint);
+  });
+
+  it('extracts tickers from Pump.fun metadata responses', () => {
+    const mint = 'AyFADPkMeLXJY9gUhwekAKQPf7hcyABKe6yDFZ5Upump';
+    expect(pumpTickerFromResponse({ mint, symbol: 'AYFA' }, mint)).toBe('AYFA');
+    expect(pumpTickerFromResponse({ data: { coin: { symbol: 'COUZ' } } }, mint)).toBe('COUZ');
+    expect(pumpTickerFromResponse({ symbol: mint }, mint)).toBeNull();
   });
 
   it('recognizes a mint fragment as a missing ticker', () => {

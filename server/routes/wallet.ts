@@ -6,7 +6,7 @@ import { HttpError, limited, route } from '../lib/http';
 import { rules } from '../lib/env';
 import { applyWalletLedgerTrades, CoinState, newCoin, WalletCoinLedger, unpackState } from '../lib/coin';
 import { junkReasons, realizedOf } from '../lib/scoring';
-import { needsTickerLookup, resolveWalletTicker, walletTradesFromTransactions } from '../lib/wallet-scan';
+import { needsTickerLookup, pumpTickerFromResponse, resolveWalletTicker, walletTradesFromTransactions } from '../lib/wallet-scan';
 import { getStore } from '../lib/store';
 
 function parse<T>(raw: unknown): T | null {
@@ -312,25 +312,47 @@ export default route(async ({ q, ip }) => {
     else toFetch.push(mint);
   });
 
-  // Keep metadata RPC requests bounded inside the serverless response budget.
-  if (toFetch.length && toFetch.length > 0) {
+  // Prefer Pump.fun's coin record for Pump mints, then fall back to Helius DAS.
+  // Keep both providers bounded by the serverless response budget.
+  if (toFetch.length > 0) {
     try {
       const availableMs = Math.max(0, 9000 - (Date.now() - routeStartedAt));
-      const metadataChain = new HeliusChain();
       const canFetch = availableMs > 1800;
-      if (canFetch) metadataChain.setDeadline(Date.now() + Math.min(3500, availableMs - 300));
+      const deadline = Date.now() + Math.min(3500, Math.max(0, availableMs - 300));
+      const metadataChain = new HeliusChain();
+      if (canFetch) metadataChain.setDeadline(deadline);
       const lookups = canFetch ? toFetch.slice(0, 12) : [];
-      const resolved = await Promise.all(lookups.map(async (mint) => [mint, await metadataChain.tokenMeta(mint)] as const));
+      const resolved = await Promise.all(lookups.map(async (mint) => {
+        let symbol: string | null = null;
+        const left = deadline - Date.now();
+        if (left > 500) {
+          try {
+            const response = await fetch(`https://frontend-api-v3.pump.fun/coins/${encodeURIComponent(mint)}?sync=true`, {
+              headers: { Accept: 'application/json' },
+              signal: AbortSignal.timeout(Math.min(1200, left - 200)),
+            });
+            if (response.ok) symbol = pumpTickerFromResponse(await response.json(), mint);
+          } catch {
+            // Some Pump.fun responses require auth or can be temporarily unavailable.
+          }
+        }
+        if (!symbol && deadline - Date.now() > 1500) {
+          const meta = await metadataChain.tokenMeta(mint);
+          if (meta?.symbol && !needsTickerLookup(meta.symbol, mint)) {
+            symbol = resolveWalletTicker(mint, undefined, meta.symbol);
+          }
+        }
+        return [mint, symbol] as const;
+      }));
       const save: [string, string][] = [];
-      for (const [mint, meta] of resolved) {
-        if (!meta?.symbol || needsTickerLookup(meta.symbol, mint)) continue;
-        const symbol = resolveWalletTicker(mint, undefined, meta.symbol);
+      for (const [mint, symbol] of resolved) {
+        if (!symbol) continue;
         symbolByMint.set(mint, symbol);
         save.push([`ticker:${mint}`, symbol]);
       }
       if (save.length) await store.run(save.map(([key, value]) => ['SET', key, value]));
     } catch {
-      // Show UNKNOWN rather than exposing a mint address if metadata is unavailable.
+      // Show UNKNOWN rather than exposing a mint address if both metadata providers fail.
     }
   }
 

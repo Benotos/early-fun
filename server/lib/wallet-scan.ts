@@ -130,3 +130,29 @@ export function resolveWalletTicker(
   ) return value.toUpperCase().slice(0, 12);
   return 'UNKNOWN';
 }
+
+
+/** Extract the ticker from Pump.fun coin metadata responses across known response shapes. */
+export function pumpTickerFromResponse(payload: unknown, mint: string): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const root = payload as Record<string, unknown>;
+  const data = root.data && typeof root.data === 'object' ? root.data as Record<string, unknown> : undefined;
+  const coin = root.coin && typeof root.coin === 'object' ? root.coin as Record<string, unknown> : undefined;
+  const nestedCoin = data?.coin && typeof data.coin === 'object' ? data.coin as Record<string, unknown> : undefined;
+  const candidates = [
+    root.symbol,
+    root.ticker,
+    coin?.symbol,
+    coin?.ticker,
+    data?.symbol,
+    data?.ticker,
+    nestedCoin?.symbol,
+    nestedCoin?.ticker,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const ticker = resolveWalletTicker(mint, undefined, candidate);
+    if (ticker !== 'UNKNOWN') return ticker;
+  }
+  return null;
+}
