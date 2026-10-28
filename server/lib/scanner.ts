@@ -199,6 +199,75 @@ function emptyWalletCoinLedger(): WalletCoinLedger {
   };
 }
 
+
+/** Register a single migration signature into the rolling seven-day coin index. */
+async function registerMigrationRow(
+  store: Store,
+  chain: Chain,
+  row: { signature: string; blockTime: number | null },
+  now: number,
+  report: ScanReport,
+  cursorKey: string
+): Promise<'ok' | 'retry'> {
+  const tx = await chain.getTx(row.signature);
+  if (!tx) {
+    report.errors.push('tx not available yet ' + row.signature.slice(0, 8));
+    return 'retry';
+  }
+  const mig = parseMigration(tx);
+  if (!mig) {
+    report.errors.push('unparsed migration ' + row.signature + ' ' + describeTx(tx));
+    await store.set(cursorKey, row.signature);
+    return 'ok';
+  }
+  const curve = curveAddress(mig.mint);
+  if (!txKeys(tx).includes(curve)) {
+    report.errors.push('curve mismatch ' + mig.mint.slice(0, 8));
+    await store.set(cursorKey, row.signature);
+    return 'ok';
+  }
+  const time = row.blockTime ?? tx.blockTime ?? now;
+  const day = dayKey(time);
+  if (!(await store.get(K.coin(mig.mint)))) {
+    const meta = await chain.tokenMeta(mig.mint);
+    const state = newCoin({
+      mint: mig.mint,
+      curve,
+      pool: mig.pool,
+      migTime: time,
+      migSig: row.signature,
+      day,
+      dayEnd: dayStart(day) + 86400,
+      symbol: meta?.symbol,
+      name: meta?.name,
+    });
+    await saveCoin(store, state);
+    await store.run([
+      ['SADD', K.coins(day), mig.mint],
+      ['HSET', K.idx(day), mig.mint, '0'],
+      ['EXPIRE', K.idx(day), TTL_DAY],
+      ['EXPIRE', K.coins(day), TTL_DAY],
+    ]);
+    report.newCoins++;
+  } else {
+    // Repair an older coin record if it was discovered without its migrated AMM pool.
+    const existing = await loadCoin(store, mig.mint);
+    if (existing && !existing.pool) {
+      existing.pool = mig.pool;
+      existing.poolTok = null;
+      existing.poolSlot = 0;
+      existing.poolSeen = 0;
+      existing.poolDone = false;
+      existing.final = false;
+      existing.rebuildPending = true;
+      await saveCoin(store, existing);
+      await store.cmd('HSET', K.idx(existing.day), existing.mint, `${now}|${existing.migTime}|r`);
+    }
+  }
+  await store.set(cursorKey, row.signature);
+  return 'ok';
+}
+
 async function persistWalletLedgers(store: Store, s: CoinState, trades: Trade[], r: Rules): Promise<void> {
   const byWallet = new Map<string, Trade[]>();
   for (const t of trades) {
@@ -371,59 +440,45 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
     // are corrected consistently, not just for today and yesterday.
     const days = Array.from({ length: 7 }, (_, i) => addDays(today, -i));
 
-    // 1. discover new migrations
+    // 1. discover new migrations and independently backfill the rolling leaderboard window.
+    // The live cursor only sees newly-created migrations; the history cursor walks older
+    // migration-account signatures so older coins that already migrated are not omitted.
+    const discoveryDeadline = Math.min(deadline - 2000, started + Math.floor(o.budgetMs * 0.45));
     const cursor = await store.get('mig:cursor');
-    // only discover migrations from the start of today (BACKFILL_DAYS=1 adds yesterday), so today fills first
     const back = Math.max(0, Math.min(1, num('BACKFILL_DAYS', 0)));
-    const rows = await chain.listMigrations({ untilSig: cursor, minTime: dayStart(addDays(today, -back)), maxPages: 5 });
-    for (const row of rows.slice().reverse()) {
-      if (Date.now() > Math.min(deadline - 2000, started + Math.floor(o.budgetMs * 0.45))) break;
+    const liveRows = await chain.listMigrations({
+      untilSig: cursor,
+      minTime: dayStart(addDays(today, -back)),
+      maxPages: 5,
+    });
+    for (const row of liveRows.slice().reverse()) {
+      if (Date.now() > discoveryDeadline) break;
       try {
-        const tx = await chain.getTx(row.signature);
-        if (!tx) {
-          report.errors.push('tx not available yet ' + row.signature.slice(0, 8));
-          break; // keep order, retry next scan
-        }
-        const mig = parseMigration(tx);
-        if (!mig) {
-          report.errors.push('unparsed migration ' + row.signature + ' ' + describeTx(tx));
-          await store.set('mig:cursor', row.signature);
-          continue;
-        }
-        const curve = curveAddress(mig.mint);
-        if (!txKeys(tx).includes(curve)) {
-          report.errors.push('curve mismatch ' + mig.mint.slice(0, 8));
-          await store.set('mig:cursor', row.signature);
-          continue;
-        }
-        const time = row.blockTime ?? tx.blockTime ?? now;
-        const day = dayKey(time);
-        if (!(await store.get(K.coin(mig.mint)))) {
-          const meta = await chain.tokenMeta(mig.mint);
-          const s = newCoin({
-            mint: mig.mint,
-            curve,
-            pool: mig.pool,
-            migTime: time,
-            migSig: row.signature,
-            day,
-            dayEnd: dayStart(day) + 86400,
-            symbol: meta?.symbol,
-            name: meta?.name,
-          });
-          await saveCoin(store, s);
-          await store.run([
-            ['SADD', K.coins(day), mig.mint],
-            ['HSET', K.idx(day), mig.mint, '0'],
-            ['EXPIRE', K.idx(day), TTL_DAY],
-            ['EXPIRE', K.coins(day), TTL_DAY],
-          ]);
-          report.newCoins++;
-        }
-        await store.set('mig:cursor', row.signature);
+        if (await registerMigrationRow(store, chain, row, now, report, 'mig:cursor') === 'retry') break;
       } catch (e) {
         report.errors.push('discover ' + (e instanceof Error ? e.message : String(e)));
         break;
+      }
+    }
+
+    // Separate resumable historical cursor; never reuse the live cursor for this walk.
+    // Seven days matches the public rolling leaderboard/profile window. One page per run
+    // keeps RPC usage bounded; the cursor advances only after each signature is handled.
+    if (Date.now() < discoveryDeadline) {
+      const historyCursor = await store.get('mig:history:cursor');
+      const historyRows = await chain.listMigrations({
+        beforeSig: historyCursor,
+        minTime: dayStart(addDays(today, -6)),
+        maxPages: 1,
+      });
+      for (const row of historyRows) {
+        if (Date.now() > discoveryDeadline) break;
+        try {
+          if (await registerMigrationRow(store, chain, row, now, report, 'mig:history:cursor') === 'retry') break;
+        } catch (e) {
+          report.errors.push('history discover ' + (e instanceof Error ? e.message : String(e)));
+          break;
+        }
       }
     }
 
