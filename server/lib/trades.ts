@@ -103,6 +103,7 @@ export function extractTrade(tx: RawTx, v: Venue): Trade | null {
 
   const whole = tokens / 10 ** TOKEN_DECIMALS;
   if (!(whole > 0) || !(sol > 0)) return null;
+  const walletTokenBalanceBefore = side === 'sell' ? ownerTokenBalance(tx, owner, v.mint, 'pre') : undefined;
   return {
     sig: tx.transaction.signatures[0],
     slot: tx.slot,
@@ -112,9 +113,7 @@ export function extractTrade(tx: RawTx, v: Venue): Trade | null {
     sol,
     tokens,
     price: sol / whole,
-    ...(side === 'sell' && ownerTokenBalance(tx, owner, v.mint, 'pre') !== undefined
-      ? { walletTokenBalanceBefore: ownerTokenBalance(tx, owner, v.mint, 'pre') }
-      : {}),
+    ...(walletTokenBalanceBefore !== undefined ? { walletTokenBalanceBefore } : {}),
   };
 }
 
