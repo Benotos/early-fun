@@ -139,7 +139,7 @@ export default route(async ({ q, ip }) => {
               : 0;
             if (soldRatio < 0.9 || soldRatio > 1.02 || p.ls - p.lb < r.minHoldSeconds) return;
             const lossSol = -x.pnl;
-            if (lossSol < r.minLossSol || lossSol / x.cost > r.lossCapPct) return;
+            if (lossSol < r.minLossSol) return;
             if (lossByCoin.has(key)) return;
             lossByCoin.set(key, {
               wallet: address,
