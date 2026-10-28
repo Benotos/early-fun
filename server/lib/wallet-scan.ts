@@ -156,3 +156,29 @@ export function pumpTickerFromResponse(payload: unknown, mint: string): string |
   }
   return null;
 }
+
+
+/** Get a token's display ticker from Dexscreener's public token lookup response. */
+export function dexTickerFromResponse(payload: unknown, mint: string): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const root = payload as Record<string, unknown>;
+  if (!Array.isArray(root.pairs)) return null;
+  const matches: { symbol: string; liquidity: number; volume: number }[] = [];
+  for (const value of root.pairs) {
+    if (!value || typeof value !== 'object') continue;
+    const pair = value as Record<string, unknown>;
+    const base = pair.baseToken && typeof pair.baseToken === 'object' ? pair.baseToken as Record<string, unknown> : {};
+    const quote = pair.quoteToken && typeof pair.quoteToken === 'object' ? pair.quoteToken as Record<string, unknown> : {};
+    let candidate: unknown;
+    if (String(base.address || '').toLowerCase() === mint.toLowerCase()) candidate = base.symbol;
+    else if (String(quote.address || '').toLowerCase() === mint.toLowerCase()) candidate = quote.symbol;
+    if (typeof candidate !== 'string') continue;
+    const symbol = resolveWalletTicker(mint, undefined, candidate);
+    if (symbol === 'UNKNOWN') continue;
+    const liquidity = pair.liquidity && typeof pair.liquidity === 'object' ? Number((pair.liquidity as Record<string, unknown>).usd) || 0 : 0;
+    const volume = pair.volume && typeof pair.volume === 'object' ? Number((pair.volume as Record<string, unknown>).h24) || 0 : 0;
+    matches.push({ symbol, liquidity, volume });
+  }
+  matches.sort((a, b) => b.liquidity - a.liquidity || b.volume - a.volume);
+  return matches[0]?.symbol || null;
+}
