@@ -109,6 +109,19 @@ describe('strict bought and sold token matching', () => {
     expect(realizedRows(s, rules()).map((x) => x.wallet)).toEqual([trackedWallet]);
   });
 
+  it('rejects even a small excess sale that could be transferred tokens', () => {
+    const trackedWallet = fakeKey();
+    const s = coinFor(trackedWallet);
+    applyTrades(s, [
+      { sig: 'buy', slot: 100, time: 1_700_000_000, wallet: trackedWallet, side: 'buy', sol: 1, tokens: 1_000_000, price: 1 },
+      { sig: 'sell-with-extra', slot: 200, time: 1_700_000_300, wallet: trackedWallet, side: 'sell', sol: 2.02, tokens: 1_010_000, price: 2 },
+    ], rules());
+
+    expect(tokenFlowBalanced(s.pnl[trackedWallet])).toBe(false);
+    expect(realizedOf(s, trackedWallet)).toBeNull();
+    expect(realizedRows(s, rules())).toEqual([]);
+  });
+
   it('rejects partial exits because bought and sold amounts do not match', () => {
     const trackedWallet = fakeKey();
     const s = coinFor(trackedWallet);
