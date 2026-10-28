@@ -156,7 +156,7 @@ export class HeliusChain implements Chain {
     }
   }
 
-  async listMigrations(opts: { untilSig?: string | null; minTime: number; maxPages?: number }) {
+  async listMigrations(opts: { untilSig?: string | null; beforeSig?: string | null; minTime: number; maxPages?: number }) {
     const out: SigInfo[] = [];
     let before: string | undefined;
     for (let page = 0; page < (opts.maxPages ?? 5); page++) {
