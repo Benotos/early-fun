@@ -61,7 +61,7 @@ const ROW_CAP = 1500;
  * the wallet's tracked purchases.
  */
 export function tokenFlowBalanced(p: CoinState['pnl'][string], tolerance = 0.001): boolean {
-  if (!p || !(p.bt > 0) || !(p.st > 0)) return false;
+  if (!p || p.foreignInventory || !(p.bt > 0) || !(p.st > 0)) return false;
   const ratio = p.st / p.bt;
   if (!Number.isFinite(ratio) || ratio < 1 - tolerance || ratio > 1 + tolerance) return false;
   if (typeof p.matchedSoldTokens === 'number') {
@@ -72,6 +72,9 @@ export function tokenFlowBalanced(p: CoinState['pnl'][string], tolerance = 0.001
 }
 
 function tokenFlowExplanation(p: CoinState['pnl'][string]): string {
+  if (p.foreignInventory) {
+    return 'sold while holding tokens not accounted for by this wallet\'s tracked buys; transferred or airdropped tokens do not count';
+  }
   const scale = 10 ** TOKEN_DECIMALS;
   const bought = p.bt / scale;
   const sold = p.st / scale;
