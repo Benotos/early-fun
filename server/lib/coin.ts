@@ -29,6 +29,8 @@ export interface WalletPnl {
   matchedSoldTokens?: number;
   matchedSoldCostSol?: number;
   matchedSoldProceedsSol?: number;
+  /** Seller held more tokens than the scanner can account for from purchases; likely a transfer or airdrop. */
+  foreignInventory?: 1;
 }
 
 export type Bar = [number, number, number, number?, number?];
@@ -209,6 +211,10 @@ export function applyTrades(s: CoinState, trades: Trade[], r: Rules): void {
       // may have come from a transfer and must not generate fabricated profit.
       const inventoryTokens = p.inventoryTokens || 0;
       const inventoryCostSol = p.inventoryCostSol || 0;
+      if (typeof t.walletTokenBalanceBefore === 'number') {
+        const allowance = Math.max(1, inventoryTokens * 0.001);
+        if (t.walletTokenBalanceBefore > inventoryTokens + allowance) p.foreignInventory = 1;
+      }
       if (inventoryTokens > 0 && t.tokens > 0) {
         const matchedTokens = Math.min(t.tokens, inventoryTokens);
         const matchedCost = inventoryCostSol * (matchedTokens / inventoryTokens);
@@ -280,6 +286,10 @@ export function applyWalletLedgerTrades(
       p.ls = t.time;
       const inventoryTokens = p.inventoryTokens || 0;
       const inventoryCostSol = p.inventoryCostSol || 0;
+      if (typeof t.walletTokenBalanceBefore === 'number') {
+        const allowance = Math.max(1, inventoryTokens * 0.001);
+        if (t.walletTokenBalanceBefore > inventoryTokens + allowance) p.foreignInventory = 1;
+      }
       if (inventoryTokens > 0 && t.tokens > 0) {
         const matchedTokens = Math.min(t.tokens, inventoryTokens);
         const matchedCost = inventoryCostSol * (matchedTokens / inventoryTokens);

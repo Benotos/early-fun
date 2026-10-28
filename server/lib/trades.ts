@@ -10,6 +10,8 @@ export interface Trade {
   sol: number; // SOL amount that moved through the venue
   tokens: number; // raw token units
   price: number; // SOL per whole token
+  /** Token balance owned by this wallet immediately before a sell, if visible in transaction metadata. */
+  walletTokenBalanceBefore?: number;
 }
 
 export interface Venue {
@@ -24,6 +26,19 @@ function tokenDelta(tx: RawTx, owner: string, mint: string): number {
   for (const b of m.postTokenBalances || []) if (b.owner === owner && b.mint === mint) d += Number(b.uiTokenAmount.amount);
   for (const b of m.preTokenBalances || []) if (b.owner === owner && b.mint === mint) d -= Number(b.uiTokenAmount.amount);
   return d;
+}
+
+/** Aggregate the relevant owner's token balance from transaction metadata. */
+function ownerTokenBalance(tx: RawTx, owner: string, mint: string, side: 'pre' | 'post'): number | undefined {
+  const balances = side === 'pre' ? tx.meta?.preTokenBalances : tx.meta?.postTokenBalances;
+  let seen = false;
+  let total = 0;
+  for (const b of balances || []) {
+    if (b.owner !== owner || b.mint !== mint) continue;
+    seen = true;
+    total += Number(b.uiTokenAmount.amount);
+  }
+  return seen ? total : undefined;
 }
 
 /** the wallet that really received (buy) or gave up (sell) the tokens, never the venue itself */
@@ -88,6 +103,7 @@ export function extractTrade(tx: RawTx, v: Venue): Trade | null {
 
   const whole = tokens / 10 ** TOKEN_DECIMALS;
   if (!(whole > 0) || !(sol > 0)) return null;
+  const walletTokenBalanceBefore = side === 'sell' ? ownerTokenBalance(tx, owner, v.mint, 'pre') : undefined;
   return {
     sig: tx.transaction.signatures[0],
     slot: tx.slot,
@@ -97,6 +113,7 @@ export function extractTrade(tx: RawTx, v: Venue): Trade | null {
     sol,
     tokens,
     price: sol / whole,
+    ...(walletTokenBalanceBefore !== undefined ? { walletTokenBalanceBefore } : {}),
   };
 }
 
