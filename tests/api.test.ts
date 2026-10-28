@@ -104,6 +104,24 @@ describe('api routes', () => {
     expect(result.json.losses.find((entry: any) => entry.mint === world.mint)?.lossSol).toBeCloseTo(18, 4);
   });
 
+  it('wallet profile recovers losses from the independent ledger when the compact state drops a wallet', async () => {
+    const address = world.wallets.l2;
+    const state = (await loadCoin(store, world.mint))!;
+    expect(state.pnl[address]).toBeTruthy();
+    delete state.pnl[address];
+    delete state.buys[address];
+    await saveCoin(store, state);
+
+    // Remove the board lookup too, ensuring the result comes from the per-wallet ledger.
+    const hashes = (store as any).hashes as Map<string, Map<string, string>>;
+    hashes.get(K.loss('2026-10-26'))?.delete(address);
+
+    const result = await call(wallet as any, `/api/wallet?address=${address}`);
+    expect(result.status).toBe(200);
+    expect(result.json.losses.some((entry: any) => entry.mint === world.mint)).toBe(true);
+    expect(result.json.losses.find((entry: any) => entry.mint === world.mint)?.lossSol).toBeCloseTo(18, 4);
+  });
+
   it('share creates a card, serves og html and a real png', async () => {
     for (const k of ['win', 'loss']) {
       const kv: any = store;
