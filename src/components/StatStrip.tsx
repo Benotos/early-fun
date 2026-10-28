@@ -13,7 +13,7 @@ export default function StatStrip() {
     {
       k: 'Coins tracked today',
       v: data ? <CountUp value={data.meta.coins} format={(n) => Math.round(n).toString()} /> : '...',
-      s: 'migrated from pump.fun',
+      s: 'at least 1 SOL in global fees',
     },
     {
       k: 'Best profit today',
