@@ -104,7 +104,7 @@ function resetTradeAccounting(s: CoinState): void {
   s.replayAccounting = true;
 }
 
-async function refreshLiveCoinSummaries(
+export async function refreshLiveCoinSummaries(
   store: Store,
   latest: Map<string, CoinResult>,
   days: string[],
