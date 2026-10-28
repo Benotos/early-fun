@@ -25,7 +25,7 @@ function coin(mint: string, gf: number, junk = false): CoinResult {
 }
 
 describe('tracked coin eligibility', () => {
-  it('counts every migrated coin that reaches the global fee threshold, independent of board quality gates', () => {
+  it('excludes quality-filtered coins even when they reach the global fee threshold', () => {
     const rows = [
       coin('eligible', 1.25),
       coin('exact-threshold', 1),
@@ -37,7 +37,6 @@ describe('tracked coin eligibility', () => {
     expect(got.map((x) => x.mint)).toEqual([
       'eligible',
       'exact-threshold',
-      'junk-but-fee-qualified',
     ]);
   });
 
