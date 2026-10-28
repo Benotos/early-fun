@@ -119,7 +119,7 @@ export default route(async ({ q, ip }) => {
             if (junkReasons(walletState, r).length) return;
             const x = realizedOf(walletState, address);
             if (!x || !Number.isFinite(x.pnl) || Math.abs(x.pnl) < 0.00005) return;
-            const key = coinKey(state.day, mint);
+            const key = coinKey(profileState.day, mint);
 
             if (x.pnl > 0) {
               if (x.mult < r.minRealizedMult || x.buyMc < r.minEntryMcSol) return;
@@ -259,7 +259,7 @@ export default route(async ({ q, ip }) => {
             buySol: x.cost,
             buyTime: ledger.pnl.fb || firstBuy?.time || state.migTime,
             sig: firstBuy?.sig || '',
-            day: state.day,
+            day: profileState.day,
             pnlSol: solRound(x.pnl),
             inSol: solRound(x.cost),
             outSol: solRound(x.proceeds),
@@ -281,7 +281,7 @@ export default route(async ({ q, ip }) => {
             buySol: x.cost,
             sellSol: x.proceeds,
             lastSellTime: ledger.pnl.ls || ledger.pnl.lb || state.migTime,
-            day: state.day,
+            day: profileState.day,
             rank: 0,
             total: 0,
             onBoard: false,
