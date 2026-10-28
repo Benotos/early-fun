@@ -91,6 +91,26 @@ describe('end to end scan with synthetic chain', () => {
     expect(bb.losers.map((x) => Math.round(x.lossSol * 1000))).toEqual(ba.losers.map((x) => Math.round(x.lossSol * 1000)));
   });
 
+  it('retains wallet trade history outside the capped coin summary', async () => {
+    const world = buildWorld();
+    await scanAll(world);
+    const address = world.wallets.e1;
+    const before = await store.cmd('HGET', K.walletCoin(world.mint), address);
+    expect(typeof before).toBe('string');
+    const ledger = JSON.parse(String(before));
+    expect(ledger.pnl.bs).toBeGreaterThan(0);
+    expect(ledger.pnl.bt).toBeGreaterThan(0);
+
+    // Simulate the compact coin blob pruning a smaller wallet to stay under
+    // its size limit. The independent wallet ledger must survive unchanged.
+    const state = (await loadCoin(store, world.mint))!;
+    delete state.pnl[address];
+    delete state.buys[address];
+    await (await import('../server/lib/scanner')).saveCoin(store, state);
+    const after = await store.cmd('HGET', K.walletCoin(world.mint), address);
+    expect(after).toBe(before);
+  });
+
   it('incremental rescans do not double count trades', async () => {
     const world = buildWorld();
     await scanAll(world);
