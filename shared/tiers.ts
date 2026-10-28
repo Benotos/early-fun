@@ -12,6 +12,7 @@ export function tierFor(bestMult: number, bestLossSol: number): Tier {
   if (bestMult >= 25) return { id: 'bird', name: 'Early Bird', blurb: 'Caught a real runner early.', tone: 'win' };
   if (bestMult >= 5) return { id: 'sharp', name: 'Sharp Eye', blurb: 'Good entry on a coin that ran.', tone: 'accent' };
   if (bestMult >= 2) return { id: 'ok', name: 'Almost Early', blurb: 'Doubled up after your buy.', tone: 'accent' };
+  if (bestMult > 1) return { id: 'green', name: 'In Profit', blurb: 'You booked a qualifying win.', tone: 'win' };
   if (bestLossSol > 0) return { id: 'liq', name: 'Exit Liquidity', blurb: 'The chain remembers your sells.', tone: 'loss' };
   return { id: 'none', name: 'Unranked', blurb: 'No qualifying trades in the last 7 days.', tone: 'mute' };
 }
