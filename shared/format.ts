@@ -31,7 +31,9 @@ export function fmtPnl(n: number): string {
 }
 
 export function fmtPct(n: number): string {
-  return (n >= 99.95 ? '100' : n.toFixed(n >= 10 ? 0 : 1)) + '%';
+  if (!Number.isFinite(n)) return '0%';
+  if (Math.abs(n) >= 1000) return Math.round(n).toLocaleString('en-US') + '%';
+  return n.toFixed(Math.abs(n) >= 10 ? 0 : 1) + '%';
 }
 
 export function shortAddr(a: string): string {
