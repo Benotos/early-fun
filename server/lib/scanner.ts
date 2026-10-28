@@ -185,7 +185,7 @@ export async function refreshLiveCoinSummaries(
     updatedAt: now,
     solUsd,
     coins: all.slice(0, 150),
-  }), TTL_DAY * 3);
+  }), 60 * 60 * 24 * 3);
 }
 
 function emptyWalletCoinLedger(): WalletCoinLedger {
