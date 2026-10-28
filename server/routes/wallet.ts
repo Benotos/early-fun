@@ -328,7 +328,11 @@ export default route(async ({ q, ip }) => {
         if (left > 500) {
           try {
             const response = await fetch(`https://frontend-api-v3.pump.fun/coins/${encodeURIComponent(mint)}?sync=true`, {
-              headers: { Accept: 'application/json' },
+              headers: {
+                Accept: 'application/json',
+                Origin: 'https://pump.fun',
+                Referer: `https://pump.fun/coin/${mint}`,
+              },
               signal: AbortSignal.timeout(Math.min(1200, left - 200)),
             });
             if (response.ok) symbol = pumpTickerFromResponse(await response.json(), mint);
