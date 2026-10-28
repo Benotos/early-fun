@@ -186,7 +186,7 @@ interface TokenBalanceLite {
   decimals: number;
 }
 
-/** Jito tip accounts. Tips paid to them count toward a coin's global fees. */
+/** Jito tip accounts used only to estimate transaction costs; they are not Pump global fees. */
 const JITO_TIP = new Set([
   '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',
   'HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe',
