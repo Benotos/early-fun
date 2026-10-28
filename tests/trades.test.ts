@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { findFunder, txKeys } from '../server/lib/chain';
 import { applyTrades, newCoin } from '../server/lib/coin';
-import { realizedOf, tokenFlowBalanced } from '../server/lib/scoring';
+import { explainWallet, realizedOf, realizedRows, tokenFlowBalanced } from '../server/lib/scoring';
 import { extractTrade, parseMigration } from '../server/lib/trades';
 import { rules, WSOL } from '../server/lib/env';
 import { curveAddress } from '../server/lib/pda';
@@ -86,6 +86,9 @@ describe('strict bought and sold token matching', () => {
     expect(s.pnl[trackedWallet].st).toBe(15_000_000);
     expect(tokenFlowBalanced(s.pnl[trackedWallet])).toBe(false);
     expect(realizedOf(s, trackedWallet)).toBeNull();
+    expect(realizedRows(s, rules())).toEqual([]);
+    const checks = explainWallet(s, rules(), trackedWallet);
+    expect(checks.winner.some((x) => !x.ok && x.text.includes('token amounts must match'))).toBe(true);
   });
 
   it('accepts a clean round trip when token amounts in and out match', () => {
@@ -101,6 +104,7 @@ describe('strict bought and sold token matching', () => {
     expect(realizedOf(s, trackedWallet)?.cost).toBeCloseTo(0.22, 8);
     expect(realizedOf(s, trackedWallet)?.proceeds).toBeCloseTo(0.739, 8);
     expect(realizedOf(s, trackedWallet)?.pnl).toBeCloseTo(0.519, 8);
+    expect(realizedRows(s, rules()).map((x) => x.wallet)).toEqual([trackedWallet]);
   });
 
   it('rejects partial exits because bought and sold amounts do not match', () => {
