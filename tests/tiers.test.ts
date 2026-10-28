@@ -10,7 +10,7 @@ describe('wallet tier labels', () => {
   });
 
   it('keeps exit liquidity for a wallet with losses and no win', () => {
-    const tier = tierFor(0, 1);
+    const tier = tierFor(0, 1, -1);
     expect(tier.id).toBe('liq');
     expect(tier.name).toBe('Exit Liquidity');
   });
