@@ -95,15 +95,21 @@ export function winnerRows(s: CoinState, r: Rules): WinRow[] {
 export function realizedOf(s: CoinState, wallet: string) {
   const p = s.pnl[wallet];
   if (!p || p.bt <= 0 || p.st <= 0 || p.ss <= 0) return null;
-  const frac = Math.min(1, p.st / p.bt);
-  const cost = p.bs * frac;
-  if (!(cost > 0)) return null;
+  // Only recognize proceeds for tokens that this wallet actually bought.
+  // Tokens received by transfer have no tracked purchase cost and must not create
+  // a fabricated profit when they are later sold.
+  const matchedTokens = Math.min(p.bt, p.st);
+  if (!(matchedTokens > 0)) return null;
+  const cost = p.bs * (matchedTokens / p.bt);
+  const proceeds = p.ss * (matchedTokens / p.st);
+  if (!(cost > 0) || !(proceeds > 0)) return null;
   return {
     cost,
-    pnl: p.ss - cost,
-    mult: p.ss / cost,
+    proceeds,
+    pnl: proceeds - cost,
+    mult: proceeds / cost,
     buyMc: mcSol(p.bs / (p.bt / 1e6)),
-    sellMc: mcSol(p.ss / (p.st / 1e6)),
+    sellMc: mcSol(proceeds / (matchedTokens / 1e6)),
   };
 }
 
@@ -127,12 +133,12 @@ export function realizedRows(s: CoinState, r: Rules): WinRow[] {
       mult: x.mult,
       entryMc: x.buyMc,
       peakMc: x.sellMc,
-      buySol: p.bs,
+      buySol: x.cost,
       buyTime: p.fb || firstBuy?.time || 0,
       sig: firstBuy?.sig || '',
       pnl: Math.round(x.pnl * 1e4) / 1e4,
-      in: Math.round(p.bs * 1e4) / 1e4,
-      out: Math.round(p.ss * 1e4) / 1e4,
+      in: Math.round(x.cost * 1e4) / 1e4,
+      out: Math.round(x.proceeds * 1e4) / 1e4,
       ...(p.st < p.bt * 0.98 ? { hold: 1 as const } : {}),
       rz: 1,
     });
