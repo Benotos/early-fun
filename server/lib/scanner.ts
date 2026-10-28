@@ -231,7 +231,10 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
 
   try {
     const today = dayKey(now);
-    const days = [today, addDays(today, -1)];
+    // Wallet profiles expose the last seven days. When scan rules change, replay
+    // saved coin histories across that same window so stale profit/loss records
+    // are corrected consistently, not just for today and yesterday.
+    const days = Array.from({ length: 7 }, (_, i) => addDays(today, -i));
 
     // 1. discover new migrations
     const cursor = await store.get('mig:cursor');
