@@ -222,10 +222,10 @@ export async function writeSnapshots(store: Store, r: Rules, now: number): Promi
 }
 
 /** Prefers entries that passed verification (they are on the day board), falls back to the raw leader. */
-export function coinSummaries(results: CoinResult[], solUsd: number, board: DayBoard): CoinSummary[] {
+export function coinSummaries(results: CoinResult[], solUsd: number, board?: Pick<DayBoard, 'winners' | 'losers'>): CoinSummary[] {
   return results.map((c) => {
-    const vw = board.winners.find((x) => x.mint === c.mint);
-    const vl = board.losers.find((x) => x.mint === c.mint);
+    const vw = board?.winners.find((x) => x.mint === c.mint);
+    const vl = board?.losers.find((x) => x.mint === c.mint);
     return {
       mint: c.mint,
       symbol: c.symbol,
