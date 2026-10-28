@@ -98,7 +98,6 @@ export function winnerRows(s: CoinState, r: Rules): WinRow[] {
       if (!best || mult > best.mult || (mult === best.mult && c.slot < best.c.slot)) best = { c, mult, peak: pk.price };
     }
     if (!best || best.mult < r.minMult) continue;
-    const p = s.pnl[wallet];
     const pnl = p && tokenFlowBalanced(p) ? p.ss - p.bs * Math.min(1, p.st / p.bt) : undefined;
     out.push({
       ...(pnl !== undefined ? { pnl: Math.round(pnl * 1e4) / 1e4 } : {}),
