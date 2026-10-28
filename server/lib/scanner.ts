@@ -62,7 +62,7 @@ export async function saveCoin(store: Store, s: CoinState): Promise<void> {
   await store.set(K.coin(s.mint), packed, COIN_TTL);
 }
 
-const RULES_VERSION = 8;
+const RULES_VERSION = 9;
 
 /** seconds between re-reads of a coin, by how long ago it migrated */
 function rescanEvery(ageSec: number): number {
@@ -71,6 +71,34 @@ function rescanEvery(ageSec: number): number {
   if (ageSec < 6 * 3600) return 300;
   if (ageSec < 12 * 3600) return 900;
   return 1800;
+}
+
+/** Reset only derived trade state so legacy coins can be replayed with matched-token accounting. */
+function resetTradeAccounting(s: CoinState): void {
+  s.stair = [];
+  s.buys = {};
+  s.pnl = {};
+  s.curveTok = null;
+  s.curveSlot = 0;
+  s.curveSeen = 0;
+  s.curveDone = false;
+  s.poolTok = null;
+  s.poolSlot = 0;
+  s.poolSeen = 0;
+  s.poolDone = !s.pool;
+  s.trades = 0;
+  s.cpk = undefined;
+  s.gf = 0;
+  s.dev = null;
+  s.createSlot = 0;
+  s.createTime = 0;
+  s.ser = [];
+  s.sres = 1;
+  s.capped = false;
+  s.final = false;
+  s.lastScan = 0;
+  s.rebuildPending = true;
+  s.replayAccounting = true;
 }
 
 /** coins that failed a check that can never change */
@@ -204,7 +232,10 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
 
   try {
     const today = dayKey(now);
-    const days = [today, addDays(today, -1)];
+    // Wallet profiles expose the last seven days. When scan rules change, replay
+    // saved coin histories across that same window so stale profit/loss records
+    // are corrected consistently, not just for today and yesterday.
+    const days = Array.from({ length: 7 }, (_, i) => addDays(today, -i));
 
     // 1. discover new migrations
     const cursor = await store.get('mig:cursor');
@@ -291,12 +322,20 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
       }
       const h = await store.hgetall(K.idx(d));
       for (const [m, v] of Object.entries(h)) {
-        if (v === 'f') continue;
-        const [lastS, migS] = String(v).split('|');
+        if (v === `f|${RULES_VERSION}`) continue;
+        if (v === 'f' || v.startsWith('f|')) {
+          const version = v === 'f' ? 0 : Number(v.split('|')[1]) || 0;
+          if (version === RULES_VERSION) continue;
+          // Final coins from older rules must be replayed once to repair their results.
+          queue.push({ mint: m, day: d, last: 0 });
+          continue;
+        }
+        const [lastS, migS, mode] = String(v).split('|');
         const last = Number(lastS) || 0;
         const mig = Number(migS) || 0;
-        // older coins trade less, so they are re-read less often. Saves most of the RPC credits.
-        if (last > 0 && mig > 0 && now - last < rescanEvery(now - mig)) continue;
+        // Historical accounting replays must make steady progress independent of
+        // the normal age based backoff used to save RPC credits on old coins.
+        if (mode !== 'r' && last > 0 && mig > 0 && now - last < rescanEvery(now - mig)) continue;
         queue.push({ mint: m, day: d, last });
       }
     }
@@ -307,11 +346,12 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
       if (Date.now() > deadline - 3000) break;
       const s = await loadCoin(store, q.mint);
       if (!s) {
-        await store.cmd('HSET', K.idx(q.day), q.mint, 'f');
+        await store.cmd('HSET', K.idx(q.day), q.mint, `f|${RULES_VERSION}`);
         continue;
       }
-      if (s.final) {
-        await store.cmd('HSET', K.idx(q.day), q.mint, 'f');
+      const needsReplay = s.rv !== RULES_VERSION;
+      if (s.final && !needsReplay && !s.rebuildPending) {
+        await store.cmd('HSET', K.idx(q.day), q.mint, `f|${RULES_VERSION}`);
         continue;
       }
       try {
@@ -319,20 +359,35 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
           const m = await chain.isMayhem(s.curve).catch(() => null);
           if (m !== null) s.mh = m;
         }
+        if (needsReplay) {
+          resetTradeAccounting(s);
+          s.rv = RULES_VERSION;
+        }
         const res = await scanCoin(chain, s, r, now, deadline);
+        // Keep the previously published result during replay until the bonding curve
+        // history is complete; otherwise a partial replay would temporarily erase winners.
+        if (s.rebuildPending && s.curveDone) {
+          s.rebuildPending = false;
+          res.changed = true;
+        }
         if (!s.final && deadForGood(s, r)) {
           s.final = true; // fake launch or Mayhem: it can never count, stop spending credits on it
           res.changed = true;
         }
-        if (s.rv !== RULES_VERSION) {
-          s.rv = RULES_VERSION;
-          res.changed = true; // old results were scored under older rules, rescore
-        }
+        if (s.final) s.replayAccounting = false;
+        if (needsReplay) res.changed = true;
         report.pages += res.pages;
         report.coinsScanned++;
         await saveCoin(store, s);
-        await store.cmd('HSET', K.idx(s.day), s.mint, s.final ? 'f' : `${now}|${s.migTime}`);
-        if (res.changed) {
+        await store.cmd(
+          'HSET',
+          K.idx(s.day),
+          s.mint,
+          s.final
+            ? `f|${RULES_VERSION}`
+            : `${now}|${s.migTime}${s.replayAccounting ? '|r' : ''}`
+        );
+        if (res.changed && !s.rebuildPending) {
           report.changed++;
           await store.set(K.res(s.mint), packResult(computeResult(s, r, now)), COIN_TTL);
           const mc = (p: number) => Number((p * TOTAL_SUPPLY).toPrecision(6));

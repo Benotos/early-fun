@@ -6,7 +6,7 @@ import Countdown from './Countdown';
 export default function StatStrip() {
   const { data } = useBoard('today');
   const bestProfit = (data?.winners || [])
-    .filter((row) => row.pnlSol !== undefined)
+    .filter((row) => row.realized && row.pnlSol !== undefined && row.pnlSol > 0)
     .sort((a, b) => (b.pnlSol ?? 0) - (a.pnlSol ?? 0))[0];
   const l = data?.losers[0];
   const tiles = [

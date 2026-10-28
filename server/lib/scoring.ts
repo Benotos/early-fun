@@ -95,15 +95,28 @@ export function winnerRows(s: CoinState, r: Rules): WinRow[] {
 export function realizedOf(s: CoinState, wallet: string) {
   const p = s.pnl[wallet];
   if (!p || p.bt <= 0 || p.st <= 0 || p.ss <= 0) return null;
-  const frac = Math.min(1, p.st / p.bt);
-  const cost = p.bs * frac;
-  if (!(cost > 0)) return null;
+
+  // New states carry transaction-by-transaction inventory matching. For legacy
+  // states, the fallback is conservative until the scanner replays their history.
+  const hasMatchedLedger = typeof p.matchedSoldTokens === 'number';
+  const matchedTokens = hasMatchedLedger ? (p.matchedSoldTokens || 0) : Math.min(p.bt, p.st);
+  if (!(matchedTokens > 0)) return null;
+  const cost = hasMatchedLedger
+    ? (p.matchedSoldCostSol || 0)
+    : p.bs * (matchedTokens / p.bt);
+  const proceeds = hasMatchedLedger
+    ? (p.matchedSoldProceedsSol || 0)
+    : p.ss * (matchedTokens / p.st);
+  if (!(cost > 0) || !(proceeds > 0)) return null;
+  const matchedMarketTokens = matchedTokens / 1e6;
   return {
     cost,
-    pnl: p.ss - cost,
-    mult: p.ss / cost,
-    buyMc: mcSol(p.bs / (p.bt / 1e6)),
-    sellMc: mcSol(p.ss / (p.st / 1e6)),
+    proceeds,
+    matchedTokens,
+    pnl: proceeds - cost,
+    mult: proceeds / cost,
+    buyMc: mcSol(cost / matchedMarketTokens),
+    sellMc: mcSol(proceeds / matchedMarketTokens),
   };
 }
 
@@ -127,13 +140,13 @@ export function realizedRows(s: CoinState, r: Rules): WinRow[] {
       mult: x.mult,
       entryMc: x.buyMc,
       peakMc: x.sellMc,
-      buySol: p.bs,
+      buySol: x.cost,
       buyTime: p.fb || firstBuy?.time || 0,
       sig: firstBuy?.sig || '',
       pnl: Math.round(x.pnl * 1e4) / 1e4,
-      in: Math.round(p.bs * 1e4) / 1e4,
-      out: Math.round(p.ss * 1e4) / 1e4,
-      ...(p.st < p.bt * 0.98 ? { hold: 1 as const } : {}),
+      in: Math.round(x.cost * 1e4) / 1e4,
+      out: Math.round(x.proceeds * 1e4) / 1e4,
+      ...((p.inventoryTokens ?? Math.max(0, p.bt - p.st)) > p.bt * 0.02 ? { hold: 1 as const } : {}),
       rz: 1,
     });
   }
@@ -151,18 +164,21 @@ export function loserRows(s: CoinState, r: Rules): LossRow[] {
     if (p.sn || wallet === s.dev) continue;
     if ((p.n || 0) > r.maxWalletTrades) continue; // volume bot
     if (p.bt <= 0 || p.bs < r.minBuySol) continue;
-    if (p.st < p.bt * 0.9 || p.st > p.bt * 1.02) continue;
-    const lossSol = p.bs - p.ss;
+    const x = realizedOf(s, wallet);
+    const matchedSoldTokens = typeof p.matchedSoldTokens === 'number' ? p.matchedSoldTokens : Math.min(p.bt, p.st);
+    if (matchedSoldTokens < p.bt * 0.9 || matchedSoldTokens > p.bt * 1.02) continue;
+    if (!x) continue;
+    const lossSol = x.cost - x.proceeds;
     if (lossSol < r.minLossSol) continue;
     if (p.ls - p.lb < r.minHoldSeconds) continue;
     out.push({
       wallet,
       lossSol,
-      lossPct: (lossSol / p.bs) * 100,
-      buyMc: mcSol(p.bs / (p.bt / 1e6)),
-      sellMc: mcSol(p.ss / (p.st / 1e6)),
-      buySol: p.bs,
-      sellSol: p.ss,
+      lossPct: (lossSol / x.cost) * 100,
+      buyMc: x.buyMc,
+      sellMc: x.sellMc,
+      buySol: x.cost,
+      sellSol: x.proceeds,
       lastSell: p.ls,
     });
   }
@@ -222,10 +238,10 @@ export function explainWallet(s: CoinState, r: Rules, wallet: string): { winner:
     }
   }
   const loser: Check[] = [...base];
-  const exited = p.bt > 0 ? p.st / p.bt : 0;
+  const exited = p.bt > 0 ? (typeof p.matchedSoldTokens === 'number' ? p.matchedSoldTokens : Math.min(p.bt, p.st)) / p.bt : 0;
   loser.push({ ok: exited >= 0.9 && exited <= 1.02, text: `sold ${Math.round(exited * 100)}% of the tokens bought${exited < 0.9 ? ', a loss needs a full exit (90% or more)' : ''}` });
-  const loss = p.bs - p.ss;
-  if (exited >= 0.9) loser.push({ ok: loss >= r.minLossSol, text: loss > 0 ? `lost ${f(loss)} SOL${loss < r.minLossSol ? `, minimum is ${r.minLossSol}` : ''}` : 'made money on this coin, not a loss' });
+  const loss = x ? x.cost - x.proceeds : 0;
+  if (exited >= 0.9) loser.push({ ok: !!x && loss >= r.minLossSol, text: !x ? 'no sold tokens matched to tracked purchases' : loss > 0 ? `lost ${f(loss)} SOL${loss < r.minLossSol ? `, minimum is ${r.minLossSol}` : ''}` : 'made money on this coin, not a loss' });
   const held = p.ls && p.lb ? p.ls - p.lb : 0;
   loser.push({ ok: held >= r.minHoldSeconds, text: `held ${Math.round(held / 60)} min between last buy and last sell${held < r.minHoldSeconds ? `, minimum is ${Math.round(r.minHoldSeconds / 60)} min` : ''}` });
   return { winner, loser, found: true };

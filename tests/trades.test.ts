@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { findFunder, txKeys } from '../server/lib/chain';
+import { applyTrades, newCoin } from '../server/lib/coin';
+import { realizedOf } from '../server/lib/scoring';
 import { extractTrade, parseMigration } from '../server/lib/trades';
-import { WSOL } from '../server/lib/env';
+import { rules, WSOL } from '../server/lib/env';
 import { curveAddress } from '../server/lib/pda';
 import { fakeKey, mkAmmTx, mkCreateTx, mkCurveTx, mkFundTx, mkMigrationTx, fakeSig } from '../server/testing/fakechain';
 
@@ -51,6 +53,63 @@ describe('extractTrade', () => {
     tx.meta!.loadedAddresses = { writable: keys.slice(2, 3), readonly: keys.slice(3) };
     expect(txKeys(tx)).toEqual(keys);
     expect(extractTrade(tx, { kind: 'curve', address: curve, mint })?.side).toBe('buy');
+  });
+});
+
+describe('matched realized profit', () => {
+  it('does not credit sale proceeds for tokens the wallet did not buy', () => {
+    const trackedWallet = fakeKey();
+    const s = newCoin({
+      mint,
+      curve,
+      pool,
+      migTime: 1_699_999_000,
+      migSig: 'migration',
+      day: '2023-11-14',
+      dayEnd: 1_700_100_000,
+      symbol: 'TEST',
+    });
+
+    applyTrades(s, [
+      {
+        sig: 'buy',
+        slot: 100,
+        time: 1_700_000_000,
+        wallet: trackedWallet,
+        side: 'buy',
+        sol: 0.22,
+        tokens: 1_000_000,
+        price: 0.22,
+      },
+      {
+        sig: 'sell-transferred-bag',
+        slot: 200,
+        time: 1_700_000_120,
+        wallet: trackedWallet,
+        side: 'sell',
+        sol: 73.9,
+        tokens: 10_000_000,
+        price: 7.39,
+      },
+      {
+        sig: 'sell-extra-transferred-bag',
+        slot: 300,
+        time: 1_700_000_180,
+        wallet: trackedWallet,
+        side: 'sell',
+        sol: 5,
+        tokens: 5_000_000,
+        price: 1,
+      },
+    ], rules());
+
+    const result = realizedOf(s, trackedWallet);
+    expect(result).not.toBeNull();
+    expect(result!.cost).toBeCloseTo(0.22, 8);
+    expect(result!.proceeds).toBeCloseTo(7.39, 8);
+    expect(result!.pnl).toBeCloseTo(7.17, 8);
+    expect(s.pnl[trackedWallet].matchedSoldTokens).toBeCloseTo(1_000_000, 4);
+    expect(s.pnl[trackedWallet].inventoryTokens).toBeCloseTo(0, 4);
   });
 });
 

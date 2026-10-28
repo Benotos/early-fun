@@ -68,7 +68,8 @@ export default function Wallet() {
   const nav = useNavigate();
 
   const stats = useMemo(() => (data ? walletStats(data) : null), [data]);
-  const tier = stats ? tierFor(stats.bestWin?.mult ?? 0, stats.bestLoss?.lossSol ?? 0) : null;
+  const bestEntryMult = Math.max(0, ...(data?.wins || []).map((x) => x.mult));
+  const tier = stats ? tierFor(bestEntryMult, stats.bestLoss?.lossSol ?? 0) : null;
   const ltag = stats?.bestLoss ? lossTag(stats.bestLoss.lossSol) : null;
 
   useEffect(() => {
@@ -165,9 +166,13 @@ export default function Wallet() {
           <>
             <div className="stats">
               <div className="stat">
-                <span className="stat-k mono">Best entry</span>
-                <b className="stat-v mono win">{stats.bestWin ? <CountUp value={stats.bestWin.mult} format={fmtMult} /> : '-'}</b>
-                <span className="stat-s dim">{stats.bestWin ? '$' + stats.bestWin.symbol.toUpperCase() : 'none in 7 days'}</span>
+                <span className="stat-k mono">Best win</span>
+                <b className="stat-v mono win">
+                  {stats.bestWin ? (stats.bestWin.realized && stats.bestWin.pnlSol !== undefined ? <>+<CountUp value={stats.bestWin.pnlSol} format={fmtSol} /> SOL</> : <CountUp value={stats.bestWin.mult} format={fmtMult} />) : '-'}
+                </b>
+                <span className="stat-s dim">
+                  {stats.bestWin ? '$' + stats.bestWin.symbol.toUpperCase() + (stats.bestWin.realized ? ' · +' + fmtPct(Math.max(0, (stats.bestWin.mult - 1) * 100)) : '') : 'none in 7 days'}
+                </span>
               </div>
               <div className="stat">
                 <span className="stat-k mono">Days with a win</span>

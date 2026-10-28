@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { fmtMult, fmtSol, shortAddr } from '../../shared/format';
+import { fmtMult, fmtPct, fmtSol, shortAddr } from '../../shared/format';
 import { walletStats } from '../../shared/stats';
 import { tierFor } from '../../shared/tiers';
 import { useWallet } from '../lib/api';
@@ -12,7 +12,11 @@ export default function MyStanding() {
   const { data, error } = useWallet(me || '');
   if (!me) return null;
   const today = todayUtc();
-  const w = data?.wins.filter((x) => x.day === today).sort((a, b) => b.mult - a.mult)[0];
+  const winsToday = (data?.wins || []).filter((x) => x.day === today);
+  const w = [...winsToday]
+    .filter((x) => x.realized && x.pnlSol !== undefined && x.pnlSol > 0)
+    .sort((a, b) => (b.pnlSol ?? 0) - (a.pnlSol ?? 0))[0] ??
+    winsToday.sort((a, b) => b.mult - a.mult)[0];
   const l = data?.losses.filter((x) => x.day === today).sort((a, b) => b.lossSol - a.lossSol)[0];
   const st = data ? walletStats(data) : null;
   const tier = st ? tierFor(st.bestWin?.mult ?? 0, st.bestLoss?.lossSol ?? 0) : null;
@@ -34,7 +38,9 @@ export default function MyStanding() {
           <div className="standing-line mono">
             {w && (
               <span>
-                <span className="dim">best entry today</span> <b className="win">{fmtMult(w.mult)}</b> <span className="dim">${w.symbol.toUpperCase()}</span>{' '}
+                <span className="dim">{w.pnlSol !== undefined ? 'best profit today' : 'best entry today'}</span>{' '}
+                <b className="win">{w.pnlSol !== undefined ? '+' + fmtSol(w.pnlSol) + ' SOL' : fmtMult(w.mult)}</b>{' '}
+                <span className="dim">${w.symbol.toUpperCase()}{w.pnlSol !== undefined ? ' · +' + fmtPct(Math.max(0, (w.mult - 1) * 100)) : ''}</span>{' '}
                 <span className="badge on">{w.onBoard ? `#${w.rank} on board` : `rank ~${w.rank}`}</span>
               </span>
             )}
