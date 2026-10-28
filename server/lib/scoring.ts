@@ -55,6 +55,28 @@ const mcSol = (price: number) => price * TOTAL_SUPPLY;
 const ROW_CAP = 1500;
 
 /**
+ * Board entries must be a closed, self-funded trade: tokens sold must match tokens
+ * bought, within 2% to allow small rounding/dust differences. Selling extra tokens
+ * received by transfer is an anti-abuse failure, even if part of the sale matches
+ * the wallet's tracked purchases.
+ */
+export function tokenFlowBalanced(p: CoinState['pnl'][string], tolerance = 0.02): boolean {
+  if (!p || !(p.bt > 0) || !(p.st > 0)) return false;
+  const ratio = p.st / p.bt;
+  if (!Number.isFinite(ratio) || ratio < 1 - tolerance || ratio > 1 + tolerance) return false;
+  if (typeof p.matchedSoldTokens === 'number') {
+    const matchedRatio = p.matchedSoldTokens / p.bt;
+    if (!Number.isFinite(matchedRatio) || matchedRatio < 1 - tolerance || matchedRatio > 1 + tolerance) return false;
+  }
+  return true;
+}
+
+function tokenFlowExplanation(p: CoinState['pnl'][string]): string {
+  const ratio = p.bt > 0 ? (p.st / p.bt) * 100 : 0;
+  return `token amounts must match: bought ${Math.round(p.bt).toLocaleString('en-US')}, sold ${Math.round(p.st).toLocaleString('en-US')} (${ratio.toFixed(1)}% out)`;
+}
+
+/**
  * WINNERS score = peak market cap after the buy / market cap at the buy.
  * One best entry per wallet per coin. Only buys that passed the filters
  * (not in the creation window, not the dev, at least MIN_BUY_SOL) are candidates.
@@ -64,7 +86,9 @@ export function winnerRows(s: CoinState, r: Rules): WinRow[] {
   const out: WinRow[] = [];
   for (const [wallet, cands] of Object.entries(s.buys)) {
     if ((s.pnl[wallet]?.n || 0) > r.maxWalletTrades) continue; // volume bot
-    if (r.winRequireSell && !((s.pnl[wallet]?.ss || 0) > 0)) continue; // must have taken profit, not just held
+    const p = s.pnl[wallet];
+    if (r.winRequireSell && (!p || !tokenFlowBalanced(p))) continue; // must sell the purchased amount, not a transferred bag
+    if (r.winRequireSell && !((p?.ss || 0) > 0)) continue; // must have taken profit, not just held
     let best: { c: (typeof cands)[number]; mult: number; peak: number } | null = null;
     for (const c of cands) {
       if (mcSol(c.price) < r.minEntryMcSol) continue; // below any real pump.fun start, a price glitch
@@ -74,8 +98,7 @@ export function winnerRows(s: CoinState, r: Rules): WinRow[] {
       if (!best || mult > best.mult || (mult === best.mult && c.slot < best.c.slot)) best = { c, mult, peak: pk.price };
     }
     if (!best || best.mult < r.minMult) continue;
-    const p = s.pnl[wallet];
-    const pnl = p && p.st > 0 && p.bt > 0 ? p.ss - p.bs * Math.min(1, p.st / p.bt) : undefined;
+    const pnl = p && tokenFlowBalanced(p) ? p.ss - p.bs * Math.min(1, p.st / p.bt) : undefined;
     out.push({
       ...(pnl !== undefined ? { pnl: Math.round(pnl * 1e4) / 1e4 } : {}),
       ...(p ? { in: Math.round(p.bs * 1e4) / 1e4, out: Math.round(p.ss * 1e4) / 1e4, ...(p.st < p.bt * 0.98 ? { hold: 1 as const } : {}) } : {}),
@@ -95,6 +118,9 @@ export function winnerRows(s: CoinState, r: Rules): WinRow[] {
 export function realizedOf(s: CoinState, wallet: string) {
   const p = s.pnl[wallet];
   if (!p || p.bt <= 0 || p.st <= 0 || p.ss <= 0) return null;
+  // Require a full closed round trip. A transferred token sold by the wallet makes
+  // total token out exceed tracked token in and must never produce a board result.
+  if (!tokenFlowBalanced(p)) return null;
 
   // New states carry transaction-by-transaction inventory matching. For legacy
   // states, the fallback is conservative until the scanner replays their history.
@@ -228,7 +254,9 @@ export function explainWallet(s: CoinState, r: Rules, wallet: string): { winner:
     { ok: p.bs >= r.minBuySol, text: `bought ${f(p.bs)} SOL in total${p.bs < r.minBuySol ? `, minimum is ${r.minBuySol}` : ''}` },
   ];
   const x = realizedOf(s, wallet);
+  const balanced = tokenFlowBalanced(p);
   const winner: Check[] = [...base];
+  winner.push({ ok: balanced, text: balanced ? 'tokens bought and sold match within 2%' : tokenFlowExplanation(p) });
   if (r.winMode === 'realized') {
     winner.push({ ok: p.ss > 0, text: p.ss > 0 ? `sold for ${f(p.ss)} SOL` : 'has not sold yet, holders do not count' });
     if (x) {
@@ -238,8 +266,8 @@ export function explainWallet(s: CoinState, r: Rules, wallet: string): { winner:
     }
   }
   const loser: Check[] = [...base];
-  const exited = p.bt > 0 ? (typeof p.matchedSoldTokens === 'number' ? p.matchedSoldTokens : Math.min(p.bt, p.st)) / p.bt : 0;
-  loser.push({ ok: exited >= 0.9 && exited <= 1.02, text: `sold ${Math.round(exited * 100)}% of the tokens bought${exited < 0.9 ? ', a loss needs a full exit (90% or more)' : ''}` });
+  const exited = p.bt > 0 ? p.st / p.bt : 0;
+  loser.push({ ok: balanced, text: balanced ? 'tokens bought and sold match within 2%' : tokenFlowExplanation(p) });
   const loss = x ? x.cost - x.proceeds : 0;
   if (exited >= 0.9) loser.push({ ok: !!x && loss >= r.minLossSol, text: !x ? 'no sold tokens matched to tracked purchases' : loss > 0 ? `lost ${f(loss)} SOL${loss < r.minLossSol ? `, minimum is ${r.minLossSol}` : ''}` : 'made money on this coin, not a loss' });
   const held = p.ls && p.lb ? p.ls - p.lb : 0;
