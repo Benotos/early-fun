@@ -342,8 +342,9 @@ export default route(async ({ q, ip }) => {
         }
         if (!symbol && deadline - Date.now() > 1500) {
           const meta = await metadataChain.tokenMeta(mint);
-          if (meta?.symbol && !needsTickerLookup(meta.symbol, mint)) {
-            symbol = resolveWalletTicker(mint, undefined, meta.symbol);
+          if (meta?.symbol) {
+            const ticker = resolveWalletTicker(mint, undefined, meta.symbol);
+            if (ticker !== 'UNKNOWN') symbol = ticker;
           }
         }
         return [mint, symbol] as const;
