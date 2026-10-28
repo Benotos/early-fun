@@ -4,7 +4,7 @@ import { K } from '../lib/boards';
 import { HeliusChain, RawTx } from '../lib/chain';
 import { HttpError, limited, route } from '../lib/http';
 import { rules } from '../lib/env';
-import { applyWalletLedgerTrades, CoinState, WalletCoinLedger, unpackState } from '../lib/coin';
+import { applyWalletLedgerTrades, CoinState, newCoin, WalletCoinLedger, unpackState } from '../lib/coin';
 import { junkReasons, realizedOf } from '../lib/scoring';
 import { walletTradesFromTransactions } from '../lib/wallet-scan';
 import { getStore } from '../lib/store';
@@ -206,8 +206,29 @@ export default route(async ({ q, ip }) => {
       }
 
       for (const [mint, trades] of tradesByMint) {
-        const state = stateByMint.get(mint);
-        if (!state || !days.includes(state.day)) continue;
+        const metadataState = stateByMint.get(mint);
+        if (!metadataState && !mint.endsWith('pump')) continue;
+        const firstTime = trades.find((trade) => trade.side === 'buy')?.time || trades[0]?.time || since;
+        const lastTime = Math.max(...trades.map((trade) => trade.time));
+        const profileDay = dayKey(firstTime);
+        const profileState: CoinState = {
+          ...(metadataState || newCoin({
+            mint,
+            curve: '',
+            pool: null,
+            migTime: firstTime,
+            migSig: '',
+            day: profileDay,
+            dayEnd: Math.max(Math.floor(firstTime / 86400) * 86400 + 86400, lastTime + 1),
+            symbol: mint.slice(0, 4).toUpperCase(),
+          })),
+          // Wallet P/L covers the full seven-day window, even when the token's
+          // original board day has ended.
+          day: profileDay,
+          dayEnd: Math.max(Math.floor(firstTime / 86400) * 86400 + 86400, lastTime + 1),
+        };
+        if (!days.includes(profileState.day)) continue;
+        const state = metadataState || profileState;
         const ledger: WalletCoinLedger = {
           pnl: {
             bs: 0, ss: 0, bt: 0, st: 0, fb: 0, lb: 0, ls: 0,
@@ -216,9 +237,9 @@ export default route(async ({ q, ip }) => {
           },
           buys: [],
         };
-        applyWalletLedgerTrades(state, ledger, trades, r);
+        applyWalletLedgerTrades(profileState, ledger, trades, r);
         const walletState: CoinState = {
-          ...state,
+          ...profileState,
           pnl: { ...state.pnl, [address]: ledger.pnl },
           buys: { ...state.buys, [address]: ledger.buys },
         };
@@ -231,7 +252,7 @@ export default route(async ({ q, ip }) => {
           winByCoin.set(key, {
             wallet: address,
             mint,
-            symbol: state.symbol,
+            symbol: state.symbol || mint.slice(0, 4).toUpperCase(),
             entryMcUsd: x.buyMc * solPrice,
             peakMcUsd: x.sellMc * solPrice,
             mult: x.mult,
@@ -252,7 +273,7 @@ export default route(async ({ q, ip }) => {
           lossByCoin.set(key, {
             wallet: address,
             mint,
-            symbol: state.symbol,
+            symbol: state.symbol || mint.slice(0, 4).toUpperCase(),
             buyMcUsd: x.buyMc * solPrice,
             sellMcUsd: x.sellMc * solPrice,
             lossSol: solRound(-x.pnl),
