@@ -6,7 +6,7 @@ import { DayBoard, K, TTL_DAY, getSolUsd, readDayBoard, rebuildDay, writeSnapsho
 import { curveAddress } from './pda';
 import { CoinResult, computeResult, junkReasons, packResult, unpackResult } from './scoring';
 import { Store } from './store';
-import { Trade, describeTx, extractTrade, parseMigration, txFeesSol } from './trades';
+import { Trade, describeTx, extractTrade, parseMigration, pumpGlobalFeeSolForTrade } from './trades';
 
 export interface ScanReport {
   ok: boolean;
@@ -62,7 +62,7 @@ export async function saveCoin(store: Store, s: CoinState): Promise<void> {
   await store.set(K.coin(s.mint), packed, COIN_TTL);
 }
 
-const RULES_VERSION = 9;
+const RULES_VERSION = 10;
 const SCORING_VERSION = 12;
 const WALLET_LEDGER_VERSION = 2;
 
@@ -181,7 +181,7 @@ async function scanCoin(
       const t = extractTrade(tx, { kind: 'curve', address: s.curve, mint: s.mint });
       if (!t) continue;
       trades.push(t);
-      if (t.time < s.dayEnd) s.gf = (s.gf || 0) + txFeesSol(tx);
+      if (t.time < s.dayEnd) s.gf = (s.gf || 0) + pumpGlobalFeeSolForTrade(t, 'curve');
     }
     applyTrades(s, trades, r);
     await persistWalletLedgers(store, s, trades, r);
@@ -214,7 +214,7 @@ async function scanCoin(
         const t = extractTrade(tx, { kind: 'amm', address: s.pool!, mint: s.mint });
         if (!t) continue;
         trades.push(t);
-        if (t.time < s.dayEnd) s.gf = (s.gf || 0) + txFeesSol(tx);
+        if (t.time < s.dayEnd) s.gf = (s.gf || 0) + pumpGlobalFeeSolForTrade(t, 'amm');
       }
       applyTrades(s, trades, r);
       await persistWalletLedgers(store, s, trades, r);
