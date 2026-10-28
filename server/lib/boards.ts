@@ -66,6 +66,19 @@ export async function getSolUsd(store: Store, chain: Chain, now: number): Promis
   }
 }
 
+/**
+ * Coins displayed as tracked are those that have actually accrued the configured
+ * Pump global/protocol fee amount. Other quality gates apply to leaderboard entries,
+ * not whether a coin appears in the tracked-coins count/list.
+ */
+export function trackedCoinResults(
+  results: CoinResult[],
+  r: Rules,
+  blocked: Set<string> = blockedMints()
+): CoinResult[] {
+  return results.filter((c) => !blocked.has(c.mint) && (c.gf ?? 0) >= r.minGlobalFeesSol);
+}
+
 export async function rebuildDay(
   store: Store,
   chain: Chain,
@@ -76,6 +89,7 @@ export async function rebuildDay(
   now: number
 ): Promise<DayBoard> {
   const blocked = blockedMints();
+  const trackedResults = trackedCoinResults(results, r, blocked);
   results = results.filter((c) => !c.jk && !blocked.has(c.mint));
   const { winners, losers } = mergeDay(results, solUsd, r.maxPerCoin);
   const dev = new Map(results.map((c) => [c.mint, c.dev]));
@@ -95,7 +109,7 @@ export async function rebuildDay(
     final,
     updatedAt: now,
     solUsd,
-    coins: results.length,
+    coins: trackedResults.length,
     winners: vw.picked,
     losers: vl.picked,
     verify: {
@@ -106,7 +120,7 @@ export async function rebuildDay(
     },
   };
 
-  await store.set(K.coinsum(day), JSON.stringify(coinSummaries(results, solUsd, board)), TTL_DAY);
+  await store.set(K.coinsum(day), JSON.stringify(coinSummaries(trackedResults, solUsd, board)), TTL_DAY);
 
   // wallet lookup tables: raw ranking, plus r = verified board rank (0 when not on the board)
   const onW = new Map(board.winners.map((x, i) => [x.wallet, i + 1]));
