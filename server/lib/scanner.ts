@@ -98,6 +98,7 @@ function resetTradeAccounting(s: CoinState): void {
   s.final = false;
   s.lastScan = 0;
   s.rebuildPending = true;
+  s.replayAccounting = true;
 }
 
 /** coins that failed a check that can never change */
@@ -329,11 +330,12 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
           queue.push({ mint: m, day: d, last: 0 });
           continue;
         }
-        const [lastS, migS] = String(v).split('|');
+        const [lastS, migS, mode] = String(v).split('|');
         const last = Number(lastS) || 0;
         const mig = Number(migS) || 0;
-        // older coins trade less, so they are re-read less often. Saves most of the RPC credits.
-        if (last > 0 && mig > 0 && now - last < rescanEvery(now - mig)) continue;
+        // Historical accounting replays must make steady progress independent of
+        // the normal age based backoff used to save RPC credits on old coins.
+        if (mode !== 'r' && last > 0 && mig > 0 && now - last < rescanEvery(now - mig)) continue;
         queue.push({ mint: m, day: d, last });
       }
     }
@@ -372,11 +374,19 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
           s.final = true; // fake launch or Mayhem: it can never count, stop spending credits on it
           res.changed = true;
         }
+        if (s.final) s.replayAccounting = false;
         if (needsReplay) res.changed = true;
         report.pages += res.pages;
         report.coinsScanned++;
         await saveCoin(store, s);
-        await store.cmd('HSET', K.idx(s.day), s.mint, s.final ? `f|${RULES_VERSION}` : `${now}|${s.migTime}`);
+        await store.cmd(
+          'HSET',
+          K.idx(s.day),
+          s.mint,
+          s.final
+            ? `f|${RULES_VERSION}`
+            : `${now}|${s.migTime}${s.replayAccounting ? '|r' : ''}`
+        );
         if (res.changed && !s.rebuildPending) {
           report.changed++;
           await store.set(K.res(s.mint), packResult(computeResult(s, r, now)), COIN_TTL);
