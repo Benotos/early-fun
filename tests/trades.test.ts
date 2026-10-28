@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { findFunder, txKeys } from '../server/lib/chain';
 import { applyTrades, newCoin } from '../server/lib/coin';
 import { explainWallet, realizedOf, realizedRows, tokenFlowBalanced } from '../server/lib/scoring';
-import { extractTrade, parseMigration } from '../server/lib/trades';
+import { extractTrade, parseMigration, pumpGlobalFeeSolForTrade } from '../server/lib/trades';
 import { rules, WSOL } from '../server/lib/env';
 import { curveAddress } from '../server/lib/pda';
 import { fakeKey, mkAmmTx, mkCreateTx, mkCurveTx, mkFundTx, mkMigrationTx, fakeSig } from '../server/testing/fakechain';
@@ -12,6 +12,19 @@ const curve = curveAddress(mint);
 const pool = fakeKey();
 const wallet = fakeKey();
 const base = { sig: 's', slot: 100, time: 1000, wallet, mint };
+
+describe('Pump global fee accounting', () => {
+  it('uses protocol fees rather than Solana network fees', () => {
+    expect(pumpGlobalFeeSolForTrade({ sol: 10, price: 300 / 1_000_000_000 }, 'curve')).toBeCloseTo(0.095, 9);
+    expect(pumpGlobalFeeSolForTrade({ sol: 10, price: 300 / 1_000_000_000 }, 'amm')).toBeCloseTo(0.093, 9);
+    expect(pumpGlobalFeeSolForTrade({ sol: 10, price: 500 / 1_000_000_000 }, 'amm')).toBeCloseTo(0.005, 9);
+  });
+
+  it('ignores invalid trade values instead of inflating global fees', () => {
+    expect(pumpGlobalFeeSolForTrade({ sol: -1, price: 1 }, 'curve')).toBe(0);
+    expect(pumpGlobalFeeSolForTrade({ sol: 1, price: 0 }, 'amm')).toBe(0);
+  });
+});
 
 describe('extractTrade', () => {
   it('reads a curve buy and computes price in SOL per token', () => {
