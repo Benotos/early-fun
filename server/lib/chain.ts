@@ -3,6 +3,23 @@ import { getEnv, MIGRATION_ACCOUNT, PUMP_PROGRAM, WSOL } from './env';
 
 const TOKEN_METADATA_PROGRAM = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 
+export function parseMetaplexMetadata(data: Buffer): { name: string; symbol: string } | null {
+  // Metadata account: key + update authority + mint, followed by Borsh strings.
+  let offset = 65;
+  if (data.length < offset + 4) return null;
+  const nameLength = data.readUInt32LE(offset);
+  offset += 4;
+  if (nameLength > 512 || offset + nameLength + 4 > data.length) return null;
+  const name = data.subarray(offset, offset + nameLength).toString('utf8').replace(/\0/g, '').trim();
+  offset += nameLength;
+  const symbolLength = data.readUInt32LE(offset);
+  offset += 4;
+  if (symbolLength > 128 || offset + symbolLength > data.length) return null;
+  const symbol = data.subarray(offset, offset + symbolLength).toString('utf8').replace(/\0/g, '').trim();
+  if (!symbol) return null;
+  return { name: (name || symbol).slice(0, 40), symbol: symbol.slice(0, 12) };
+}
+
 export interface TokenBalance {
   accountIndex: number;
   mint: string;
@@ -215,20 +232,9 @@ export class HeliusChain implements Chain {
       const encoded = account?.value?.data?.[0];
       if (typeof encoded !== 'string') return null;
       const data = Buffer.from(encoded, 'base64');
-      // Key (1) + update authority (32) + mint (32), then Borsh strings.
-      let offset = 65;
-      if (data.length < offset + 4) return null;
-      const nameLength = data.readUInt32LE(offset);
-      offset += 4;
-      if (nameLength > 512 || offset + nameLength + 4 > data.length) return null;
-      const name = data.subarray(offset, offset + nameLength).toString('utf8').replace(/\0/g, '').trim();
-      offset += nameLength;
-      const symbolLength = data.readUInt32LE(offset);
-      offset += 4;
-      if (symbolLength > 128 || offset + symbolLength > data.length) return null;
-      const symbol = data.subarray(offset, offset + symbolLength).toString('utf8').replace(/\0/g, '').trim();
-      if (!symbol) return null;
-      return { symbol: symbol.slice(0, 12), name: (name || symbol).slice(0, 40) };
+      const parsed = parseMetaplexMetadata(data);
+      if (!parsed?.symbol) return null;
+      return parsed;
     } catch {
       return null;
     }
