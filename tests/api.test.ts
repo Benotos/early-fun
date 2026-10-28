@@ -6,7 +6,8 @@ import img from '../server/routes/img';
 import share from '../server/routes/share';
 import sPage from '../server/routes/s';
 import wallet from '../server/routes/wallet';
-import { runScan } from '../server/lib/scanner';
+import { loadCoin, runScan, saveCoin } from '../server/lib/scanner';
+import { K } from '../server/lib/boards';
 import { MemoryStore } from '../server/lib/store';
 import { fakeKey } from '../server/testing/fakechain';
 import { NOW, buildWorld, call, freshStore } from './helpers';
@@ -81,6 +82,26 @@ describe('api routes', () => {
     expect(none.json.losses).toEqual([]);
     const l2 = await call(wallet as any, `/api/wallet?address=${world.wallets.l2}`);
     expect(l2.json.losses[0].lossPct).toBeCloseTo(90, 5);
+  });
+
+  it('wallet profile still finds a trade after its compact coin summary prunes the wallet', async () => {
+    const address = world.wallets.l2;
+    const state = (await loadCoin(store, world.mint))!;
+    expect(state.pnl[address]).toBeTruthy();
+
+    // Simulate the compact coin state removing a wallet because of its size cap.
+    delete state.pnl[address];
+    delete state.buys[address];
+    await saveCoin(store, state);
+
+    // Ensure the leaderboard lookup table cannot hide a successful fallback test.
+    const hashes = (store as any).hashes as Map<string, Map<string, string>>;
+    hashes.get(K.loss('2026-10-26'))?.delete(address);
+
+    const result = await call(wallet as any, `/api/wallet?address=${address}`);
+    expect(result.status).toBe(200);
+    expect(result.json.losses.some((entry: any) => entry.mint === world.mint)).toBe(true);
+    expect(result.json.losses.find((entry: any) => entry.mint === world.mint)?.lossSol).toBeCloseTo(18, 4);
   });
 
   it('share creates a card, serves og html and a real png', async () => {
