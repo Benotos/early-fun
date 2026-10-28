@@ -88,7 +88,9 @@ describe('strict bought and sold token matching', () => {
     expect(realizedOf(s, trackedWallet)).toBeNull();
     expect(realizedRows(s, rules())).toEqual([]);
     const checks = explainWallet(s, rules(), trackedWallet);
-    expect(checks.winner.some((x) => !x.ok && x.text.includes('token amounts must match'))).toBe(true);
+    const mismatch = checks.winner.find((x) => !x.ok && x.text.includes('token amounts must match'));
+    expect(mismatch).toBeTruthy();
+    expect(mismatch!.text).toContain('bought 1, sold 15');
   });
 
   it('accepts a clean round trip when token amounts in and out match', () => {
