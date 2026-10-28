@@ -91,6 +91,9 @@ export function winnerRows(s: CoinState, r: Rules): WinRow[] {
   for (const [wallet, cands] of Object.entries(s.buys)) {
     if ((s.pnl[wallet]?.n || 0) > r.maxWalletTrades) continue; // volume bot
     const p = s.pnl[wallet];
+    // Any wallet that sells must sell only the quantity it bought, even when
+    // peak mode is configured to allow holders.
+    if (p && p.st > 0 && !tokenFlowBalanced(p)) continue;
     if (r.winRequireSell && (!p || !tokenFlowBalanced(p))) continue; // must sell the purchased amount, not a transferred bag
     if (r.winRequireSell && !((p?.ss || 0) > 0)) continue; // must have taken profit, not just held
     let best: { c: (typeof cands)[number]; mult: number; peak: number } | null = null;
