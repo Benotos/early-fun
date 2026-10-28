@@ -25,5 +25,5 @@ export default route(async () => {
     if (records) records = { ...records, win: records.win.filter((e) => !bl.has(e.mint)), loss: records.loss.filter((e) => !bl.has(e.mint)) };
   }
   const body: PulseResponse = { ok: true, ...base, records };
-  return { json: body, cache: 'public, s-maxage=20, stale-while-revalidate=120' };
+  return { json: body, cache: 'no-store' };
 });
