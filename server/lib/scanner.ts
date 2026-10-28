@@ -63,8 +63,8 @@ export async function saveCoin(store: Store, s: CoinState): Promise<void> {
 }
 
 const RULES_VERSION = 9;
-const SCORING_VERSION = 11;
-const WALLET_LEDGER_VERSION = 1;
+const SCORING_VERSION = 12;
+const WALLET_LEDGER_VERSION = 2;
 
 /** seconds between re-reads of a coin, by how long ago it migrated */
 function rescanEvery(ageSec: number): number {
