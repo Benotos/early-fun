@@ -101,6 +101,7 @@ export function useCoin(mint: string) {
     if (!mint) return;
     let alive = true;
     let loading = false;
+    let gotData = false;
     setData(null);
     setError(null);
 
@@ -115,12 +116,13 @@ export function useCoin(mint: string) {
           { cache: 'no-store' }
         );
         if (alive) {
+          gotData = true;
           setData(d);
           setError(null);
         }
       } catch (e) {
         // Keep the last good chart visible if one refresh fails.
-        if (alive && !data) setError(e instanceof Error ? e.message : 'Failed to load');
+        if (alive && !gotData) setError(e instanceof Error ? e.message : 'Failed to load');
       } finally {
         loading = false;
       }
