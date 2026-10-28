@@ -14,7 +14,7 @@ export default function MyStanding() {
   const today = todayUtc();
   const winsToday = (data?.wins || []).filter((x) => x.day === today);
   const w = [...winsToday]
-    .filter((x) => x.pnlSol !== undefined && x.pnlSol > 0)
+    .filter((x) => x.realized && x.pnlSol !== undefined && x.pnlSol > 0)
     .sort((a, b) => (b.pnlSol ?? 0) - (a.pnlSol ?? 0))[0] ??
     winsToday.sort((a, b) => b.mult - a.mult)[0];
   const l = data?.losses.filter((x) => x.day === today).sort((a, b) => b.lossSol - a.lossSol)[0];
