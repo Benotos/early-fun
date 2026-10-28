@@ -58,7 +58,13 @@ describe('api routes', () => {
       const src = `day:2026-10-26:${k}`;
       const dst = `day:${realToday()}:${k}`;
       const kv: any = store;
-      for (const m of [kv.hashes, kv.zsets] as Map<string, any>[]) if (m.has(src)) m.set(dst, m.get(src));
+      for (const m of [kv.hashes, kv.zsets] as Map<string, any>[]) {
+        if (!m.has(src)) continue;
+        m.set(dst, m.get(src));
+        // Move rather than copy: the fixture date can still be inside the API's
+        // seven day window when CI runs on a later real date.
+        if (src !== dst) m.delete(src);
+      }
     }
     const ok = await call(wallet as any, `/api/wallet?address=${world.wallets.e1}`);
     expect(ok.status).toBe(200);
