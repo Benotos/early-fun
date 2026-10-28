@@ -155,7 +155,7 @@ export async function refreshLiveCoinSummaries(
     const summaries = new Map(existing.map((item) => [item.mint, item]));
     const board = await readDayBoard(store, day);
     for (const result of updates) {
-      if (blocked.has(result.mint) || (result.gf ?? 0) < r.minGlobalFeesSol) {
+      if (result.jk || blocked.has(result.mint) || (result.gf ?? 0) < r.minGlobalFeesSol) {
         summaries.delete(result.mint);
         continue;
       }
