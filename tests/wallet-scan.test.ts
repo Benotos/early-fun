@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { RawTx, TokenBalance } from '../server/lib/chain';
 import { WSOL } from '../server/lib/env';
-import { walletTradesFromTransactions } from '../server/lib/wallet-scan';
+import { needsTickerLookup, resolveWalletTicker, walletTradesFromTransactions } from '../server/lib/wallet-scan';
 import { fakeKey } from '../server/testing/fakechain';
 
 function balance(accountIndex: number, mint: string, owner: string, amount: number, decimals: number): TokenBalance {
@@ -92,10 +92,19 @@ describe('wallet on-demand transaction scan', () => {
     expect(walletTradesFromTransactions(wallet, [transfer], new Set([mint]), 0)).toEqual([]);
   });
 
-  it('ignores untracked token mints', () => {
+  it('discovers a Pump.fun mint from wallet history before global indexing', () => {
     const wallet = fakeKey();
-    const mint = fakeKey();
+    const mint = 'AyFADPkMeLXJY9gUhwekAKQPf7hcyABKe6yDFZ5Upump';
     const tx = swapTx({ wallet, mint, slot: 10, time: 100, side: 'buy', sol: 1, tokens: 1_000_000 });
-    expect(walletTradesFromTransactions(wallet, [tx], new Set(), 0)).toEqual([]);
+    const trades = walletTradesFromTransactions(wallet, [tx], new Set(), 0);
+    expect(trades).toHaveLength(1);
+    expect(trades[0].mint).toBe(mint);
+  });
+
+  it('recognizes a mint fragment as a missing ticker', () => {
+    const mint = 'AyFADPkMeLXJY9gUhwekAKQPf7hcyABKe6yDFZ5Upump';
+    expect(needsTickerLookup('AYFA', mint)).toBe(true);
+    expect(resolveWalletTicker(mint, 'AYFA', 'AYFA')).toBe('AYFA');
+    expect(resolveWalletTicker(mint, mint, null)).toBe('UNKNOWN');
   });
 });
