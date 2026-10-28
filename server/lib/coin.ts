@@ -68,6 +68,8 @@ export interface CoinState {
   mh?: boolean;
   /** rules version this state was last scored under */
   rv?: number;
+  /** Existing aggregation is being rebuilt after an accounting change. */
+  rebuildPending?: boolean;
   /** price path: [bucket, close, high, open, low] in SOL per token (open and low absent on old states) */
   ser: Bar[];
   /** seconds per price bucket, absent on old states (60) */
