@@ -14,14 +14,14 @@ export function PulseProvider({ children }: { children: ReactNode }) {
     let alive = true;
     const load = async () => {
       try {
-        const d = await api<PulseResponse>('/api/pulse');
+        const d = await api<PulseResponse>(`/api/pulse?_=${Date.now()}`, { cache: 'no-store' });
         if (alive) setSt({ data: d, error: null });
       } catch (e) {
         if (alive) setSt((s) => ({ data: s.data, error: e instanceof Error ? e.message : 'Failed to load' }));
       }
     };
     load();
-    const t = setInterval(load, 45000);
+    const t = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 10000);
     return () => {
       alive = false;
       clearInterval(t);

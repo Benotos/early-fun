@@ -54,7 +54,7 @@ export function useBoard(range: Range) {
   const alive = useRef(true);
   const load = useCallback(async () => {
     try {
-      const d = await api<BoardResponse>(`/api/board?range=${range}`);
+      const d = await api<BoardResponse>(`/api/board?range=${range}&_=${Date.now()}`, { cache: 'no-store' });
       if (alive.current) {
         setData(d);
         setError(null);
@@ -67,7 +67,7 @@ export function useBoard(range: Range) {
     alive.current = true;
     setData(null);
     load();
-    const t = setInterval(load, 30000);
+    const t = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 15000);
     return () => {
       alive.current = false;
       clearInterval(t);

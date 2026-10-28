@@ -1,10 +1,11 @@
 import { addDays, dayKey, dayStart } from '../../shared/format';
 import { Chain, txKeys } from './chain';
 import { CoinState, WalletCoinLedger, applyTrades, applyWalletLedgerTrades, newCoin, packState, rawBars, unpackState } from './coin';
-import { Rules, TOTAL_SUPPLY, num, rules } from './env';
-import { DayBoard, K, TTL_DAY, getSolUsd, readDayBoard, rebuildDay, writeSnapshots } from './boards';
+import { Rules, TOTAL_SUPPLY, blockedMints, num, rules } from './env';
+import { DayBoard, K, TTL_DAY, coinSummaries, getSolUsd, readDayBoard, rebuildDay, writeSnapshots } from './boards';
 import { curveAddress } from './pda';
 import { CoinResult, computeResult, junkReasons, packResult, unpackResult } from './scoring';
+import { CoinSummary } from '../../shared/types';
 import { Store } from './store';
 import { Trade, describeTx, extractTrade, parseMigration, pumpGlobalFeeSolForTrade } from './trades';
 
@@ -70,9 +71,9 @@ const WALLET_LEDGER_VERSION = 2;
 function rescanEvery(ageSec: number): number {
   if (process.env.RESCAN_BACKOFF === '0') return 0;
   if (ageSec < 2 * 3600) return 0;
-  if (ageSec < 6 * 3600) return 300;
-  if (ageSec < 12 * 3600) return 900;
-  return 1800;
+  if (ageSec < 6 * 3600) return 60;
+  if (ageSec < 12 * 3600) return 120;
+  return 300;
 }
 
 /** Reset only derived trade state so legacy coins can be replayed with matched-token accounting. */
@@ -101,6 +102,90 @@ function resetTradeAccounting(s: CoinState): void {
   s.lastScan = 0;
   s.rebuildPending = true;
   s.replayAccounting = true;
+}
+
+export async function refreshLiveCoinSummaries(
+  store: Store,
+  latest: Map<string, CoinResult>,
+  days: string[],
+  r: Rules,
+  now: number
+): Promise<void> {
+  if (!latest.size) return;
+
+  let solUsd = 0;
+  try {
+    const raw = await store.get('solusd');
+    const parsed = raw ? JSON.parse(raw) as { p?: number } : null;
+    solUsd = Number(parsed?.p) || 0;
+  } catch {
+    solUsd = 0;
+  }
+  if (!(solUsd > 0)) {
+    for (const day of days) {
+      const board = await readDayBoard(store, day);
+      if (board?.solUsd && board.solUsd > 0) {
+        solUsd = board.solUsd;
+        break;
+      }
+    }
+  }
+  if (!(solUsd > 0)) return;
+
+  const blocked = blockedMints();
+  const byDay = new Map<string, CoinResult[]>();
+  for (const result of latest.values()) {
+    const bucket = byDay.get(result.day) || [];
+    bucket.push(result);
+    byDay.set(result.day, bucket);
+  }
+
+  for (const [day, updates] of byDay) {
+    let existing: CoinSummary[] = [];
+    try {
+      const raw = await store.get(K.coinsum(day));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) existing = parsed as CoinSummary[];
+      }
+    } catch {
+      existing = [];
+    }
+
+    const summaries = new Map(existing.map((item) => [item.mint, item]));
+    const board = await readDayBoard(store, day);
+    for (const result of updates) {
+      if (blocked.has(result.mint) || (result.gf ?? 0) < r.minGlobalFeesSol) {
+        summaries.delete(result.mint);
+        continue;
+      }
+      const summary = coinSummaries([result], solUsd, board || undefined)[0];
+      summaries.set(result.mint, summary);
+    }
+    const ordered = [...summaries.values()].sort((a, b) => b.mig - a.mig);
+    await store.set(K.coinsum(day), JSON.stringify(ordered), TTL_DAY);
+  }
+
+  // The Coins page uses this pulse cache for each coin card's sparkline and stats.
+  // Update it after every scanner pass that changes coin data, not only after the
+  // ten minute leaderboard rebuild.
+  const all: CoinSummary[] = [];
+  for (const day of days) {
+    try {
+      const raw = await store.get(K.coinsum(day));
+      if (!raw) continue;
+      const rows = JSON.parse(raw);
+      if (Array.isArray(rows)) all.push(...rows as CoinSummary[]);
+    } catch {
+      // Ignore one malformed day snapshot.
+    }
+  }
+  all.sort((a, b) => b.mig - a.mig);
+  await store.set(K.pulse, JSON.stringify({
+    updatedAt: now,
+    solUsd,
+    coins: all.slice(0, 150),
+  }), 60 * 60 * 24 * 3);
 }
 
 function emptyWalletCoinLedger(): WalletCoinLedger {
@@ -394,6 +479,7 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
     // least recently scanned first across both days, so yesterday's coins are never starved by today's
     queue.sort((a, b) => a.last - b.last || (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
     const dirty = new Set<string>();
+    const liveSummaryUpdates = new Map<string, CoinResult>();
     for (const q of skipScan ? [] : queue.slice(0, r.maxCoinsPerScan)) {
       if (Date.now() > deadline - 3000) break;
       const s = await loadCoin(store, q.mint);
@@ -450,7 +536,9 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
         );
         if (res.changed && !s.rebuildPending) {
           report.changed++;
-          await store.set(K.res(s.mint), packResult(computeResult(s, r, now)), COIN_TTL);
+          const computed = computeResult(s, r, now);
+          await store.set(K.res(s.mint), packResult(computed), COIN_TTL);
+          liveSummaryUpdates.set(s.mint, computed);
           const mc = (p: number) => Number((p * TOTAL_SUPPLY).toPrecision(6));
           const pts = rawBars(s).map(([t, o, h, l, c]) => [t, mc(o), mc(h), mc(l), mc(c)]);
           await store.set(K.chart(s.mint), JSON.stringify(pts), COIN_TTL);
@@ -496,6 +584,14 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
           report.boardsBuilt.push(d);
         }
         if (report.boardsBuilt.length) await writeSnapshots(store, r, now);
+      }
+    }
+
+    if (liveSummaryUpdates.size) {
+      try {
+        await refreshLiveCoinSummaries(store, liveSummaryUpdates, days, r, now);
+      } catch (e) {
+        report.errors.push('live coin summaries ' + (e instanceof Error ? e.message : String(e)));
       }
     }
   } catch (e) {

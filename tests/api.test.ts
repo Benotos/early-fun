@@ -35,10 +35,19 @@ describe('api routes', () => {
     const r = await call(board as any, '/api/board?range=today');
     expect(r.status).toBe(200);
     expect(r.json.ok).toBe(true);
-    expect(r.headers['cache-control']).toContain('s-maxage');
+    expect(r.headers['cache-control']).toContain('no-store');
     const bad = await call(board as any, '/api/board?range=nope');
     expect(bad.status).toBe(400);
     expect(bad.json.error.code).toBe('bad_range');
+  });
+
+  it('board exposes the live tracked coin count between leaderboard rebuilds', async () => {
+    const day = realToday();
+    await store.set(K.coinsum(day), JSON.stringify(Array.from({ length: 43 }, (_, i) => ({ mint: `mint-${i}` }))));
+    const result = await call(board as any, '/api/board?range=today');
+    expect(result.status).toBe(200);
+    expect(result.json.meta.coins).toBe(43);
+    expect(result.headers['cache-control']).toContain('no-store');
   });
 
   it('board returns the seeded snapshot for the fixture day', async () => {
