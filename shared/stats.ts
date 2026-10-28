@@ -6,6 +6,7 @@ export interface WalletStats {
   winDays: number;
   lossDays: number;
   totalLossSol: number;
+  netRealizedSol: number;
   boardCount: number;
 }
 
@@ -37,6 +38,9 @@ export function walletStats(w: WalletResponse): WalletStats {
     winDays: new Set(w.wins.map((x) => x.day)).size,
     lossDays: new Set(w.losses.map((x) => x.day)).size,
     totalLossSol: w.losses.reduce((a, b) => a + b.lossSol, 0),
+    netRealizedSol:
+      realizedWins.reduce((sum, win) => sum + (win.pnlSol || 0), 0) -
+      w.losses.reduce((sum, loss) => sum + loss.lossSol, 0),
     boardCount: w.wins.filter((x) => x.onBoard).length + w.losses.filter((x) => x.onBoard).length,
   };
 }
