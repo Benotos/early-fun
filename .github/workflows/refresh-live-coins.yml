@@ -1,11 +1,16 @@
 name: refresh live coin summaries
 
-# One short run after the historical backfill, using the current scanner code.
+# Short live refresh on a schedule and after scanner/backfill changes.
 # Shared concurrency prevents overlapping scans with the regular worker.
 on:
+  schedule:
+    - cron: '*/10 * * * *'
   push:
     branches: [main]
     paths:
+      - 'server/lib/**'
+      - 'server/worker.ts'
+      - 'scripts/worker.cjs'
       - '.github/workflows/refresh-live-coins.yml'
   workflow_dispatch:
 
