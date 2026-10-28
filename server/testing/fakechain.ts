@@ -62,7 +62,7 @@ export function mkCurveTx(o: TradeOpts): RawTx {
       err: null,
       preBalances: pre,
       postBalances: post,
-      preTokenBalances: [tb(4, o.mint, o.address, cpre), tb(5, o.mint, o.wallet, 0)],
+      preTokenBalances: [tb(4, o.mint, o.address, cpre), tb(5, o.mint, o.wallet, buy ? 0 : o.tokens)],
       postTokenBalances: [
         tb(4, o.mint, o.address, buy ? cpre - o.tokens : cpre + o.tokens),
         tb(5, o.mint, o.wallet, buy ? o.tokens : 0),
@@ -86,10 +86,15 @@ export function mkAmmTx(o: TradeOpts): RawTx {
       err: null,
       preBalances: [10e9, 1e6, 1e9, 1],
       postBalances: [10e9 - 5000, 1e6, 1e9, 1],
-      preTokenBalances: [tb(4, o.mint, o.address, base), tb(5, WSOL, o.address, quote)],
+      preTokenBalances: [
+        tb(4, o.mint, o.address, base),
+        tb(5, WSOL, o.address, quote),
+        tb(6, o.mint, o.wallet, buy ? 0 : o.tokens),
+      ],
       postTokenBalances: [
         tb(4, o.mint, o.address, buy ? base - o.tokens : base + o.tokens),
         tb(5, WSOL, o.address, buy ? quote + lamQ : quote - lamQ),
+        tb(6, o.mint, o.wallet, buy ? o.tokens : 0),
       ],
     },
   };
