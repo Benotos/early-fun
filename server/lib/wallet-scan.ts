@@ -115,12 +115,18 @@ export function resolveWalletTicker(
   existing: string | null | undefined,
   metadata: string | null | undefined,
 ): string {
-  for (const candidate of [metadata, existing]) {
-    const value = (candidate || '').trim();
-    if (!value || value === mint) continue;
-    if (value.toUpperCase() === mint.slice(0, 4).toUpperCase()) continue;
-    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)) continue;
-    return value.toUpperCase().slice(0, 12);
+  // A metadata API result is authoritative, even if its real ticker coincidentally
+  // matches the first four characters of the mint.
+  const meta = (metadata || '').trim();
+  if (meta && meta !== mint && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(meta)) {
+    return meta.toUpperCase().slice(0, 12);
   }
+  const value = (existing || '').trim();
+  if (
+    value &&
+    value !== mint &&
+    value.toUpperCase() !== mint.slice(0, 4).toUpperCase() &&
+    !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)
+  ) return value.toUpperCase().slice(0, 12);
   return 'UNKNOWN';
 }
