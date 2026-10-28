@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseMetaplexMetadata, RawTx, TokenBalance } from '../server/lib/chain';
 import { WSOL } from '../server/lib/env';
-import { needsTickerLookup, pumpTickerFromResponse, resolveWalletTicker, walletTradesFromTransactions } from '../server/lib/wallet-scan';
+import { dexTickerFromResponse, needsTickerLookup, pumpTickerFromResponse, resolveWalletTicker, walletTradesFromTransactions } from '../server/lib/wallet-scan';
 import { fakeKey } from '../server/testing/fakechain';
 
 function balance(accountIndex: number, mint: string, owner: string, amount: number, decimals: number): TokenBalance {
@@ -111,6 +111,18 @@ describe('wallet on-demand transaction scan', () => {
     const data = Buffer.concat([Buffer.alloc(65), nameLength, name, symbolLength, symbol]);
     expect(parseMetaplexMetadata(data)).toEqual({ name: 'Real Token', symbol: 'REAL' });
     expect(parseMetaplexMetadata(Buffer.alloc(20))).toBeNull();
+  });
+
+  it('extracts a ticker from Dexscreener pairs and prefers liquidity', () => {
+    const mint = 'AyFADPkMeLXJY9gUhwekAKQPf7hcyABKe6yDFZ5Upump';
+    expect(dexTickerFromResponse({
+      pairs: [
+        { baseToken: { address: mint, symbol: 'AYFA' }, liquidity: { usd: 100 }, volume: { h24: 10 } },
+        { baseToken: { address: mint, symbol: 'AYFA' }, liquidity: { usd: 200 }, volume: { h24: 20 } },
+        { baseToken: { address: 'other', symbol: 'OTHER' }, quoteToken: { address: mint, symbol: 'AYFA' }, liquidity: { usd: 300 } },
+      ],
+    }, mint)).toBe('AYFA');
+    expect(dexTickerFromResponse({ pairs: [] }, mint)).toBeNull();
   });
 
   it('extracts tickers from Pump.fun metadata responses', () => {
