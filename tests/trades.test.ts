@@ -26,6 +26,7 @@ describe('extractTrade', () => {
     const tr = extractTrade(mkCurveTx({ ...base, address: curve, side: 'sell', sol: 2, tokens: 5_000_000e6 }), { kind: 'curve', address: curve, mint })!;
     expect(tr.side).toBe('sell');
     expect(tr.sol).toBeCloseTo(2, 9);
+    expect(tr.walletTokenBalanceBefore).toBe(5_000_000e6);
   });
   it('ignores create and migration transactions on the curve', () => {
     const create = mkCreateTx({ sig: 'c', slot: 1, time: 1, dev: wallet, mint, curve });
@@ -71,6 +72,28 @@ describe('strict bought and sold token matching', () => {
     s.dev = fakeKey();
     return s;
   }
+
+  it('rejects a sale when the wallet held more tokens than its tracked buys', () => {
+    const trackedWallet = fakeKey();
+    const s = coinFor(trackedWallet);
+    applyTrades(s, [
+      { sig: 'buy', slot: 100, time: 1_700_000_000, wallet: trackedWallet, side: 'buy', sol: 1, tokens: 1_000_000, price: 1 },
+      {
+        sig: 'sell', slot: 200, time: 1_700_000_300, wallet: trackedWallet,
+        side: 'sell', sol: 2, tokens: 1_000_000, price: 2,
+        walletTokenBalanceBefore: 1_010_000,
+      },
+    ], rules());
+
+    // Total buy and sell amounts appear equal, but the seller's on-chain
+    // pre-sell balance proves that extra tokens were present outside tracked buys.
+    expect(s.pnl[trackedWallet].bt).toBe(s.pnl[trackedWallet].st);
+    expect(s.pnl[trackedWallet].foreignInventory).toBe(1);
+    expect(tokenFlowBalanced(s.pnl[trackedWallet])).toBe(false);
+    expect(realizedOf(s, trackedWallet)).toBeNull();
+    const checks = explainWallet(s, rules(), trackedWallet);
+    expect(checks.winner.find((x) => !x.ok)?.text).toContain('transferred or airdropped tokens do not count');
+  });
 
   it('rejects a wallet selling transferred tokens in addition to its purchases', () => {
     const trackedWallet = fakeKey();
