@@ -1,7 +1,7 @@
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { LossEntry, WinEntry } from '../../shared/types';
 import { CoinState, peakAfter, sparkOf } from './coin';
-import { Rules, TOTAL_SUPPLY, blockedMints } from './env';
+import { Rules, TOKEN_DECIMALS, TOTAL_SUPPLY, blockedMints } from './env';
 
 /** Market caps here are in SOL, converted to USD only when a board is built. */
 export interface WinRow {
@@ -72,8 +72,12 @@ export function tokenFlowBalanced(p: CoinState['pnl'][string], tolerance = 0.02)
 }
 
 function tokenFlowExplanation(p: CoinState['pnl'][string]): string {
+  const scale = 10 ** TOKEN_DECIMALS;
+  const bought = p.bt / scale;
+  const sold = p.st / scale;
   const ratio = p.bt > 0 ? (p.st / p.bt) * 100 : 0;
-  return `token amounts must match: bought ${Math.round(p.bt).toLocaleString('en-US')}, sold ${Math.round(p.st).toLocaleString('en-US')} (${ratio.toFixed(1)}% out)`;
+  const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: TOKEN_DECIMALS });
+  return `token amounts must match: bought ${fmt(bought)}, sold ${fmt(sold)} (${ratio.toFixed(1)}% out)`;
 }
 
 /**
