@@ -54,8 +54,16 @@ export function walletTradesFromTransactions(
 
     if (!Number.isFinite(cashDeltaSol) || Math.abs(cashDeltaSol) < 0.005) continue;
 
+    const discoveredMints = new Set<string>(trackedMints);
+    // Pump.fun token mints conventionally end in "pump". Discover these directly
+    // from wallet transactions too, so an unindexed coin can still appear on the
+    // wallet profile before the global coin backfill reaches it.
+    for (const mint of new Set([...pre.keys(), ...post.keys()])) {
+      if (mint !== WSOL && mint.endsWith('pump') && decimals.get(mint) === TOKEN_DECIMALS) discoveredMints.add(mint);
+    }
+
     const candidates: { mint: string; delta: number; preBalance?: number }[] = [];
-    for (const mint of trackedMints) {
+    for (const mint of discoveredMints) {
       if (mint === WSOL) continue;
       const d = (post.get(mint) || 0) - (pre.get(mint) || 0);
       if (!d || decimals.get(mint) !== TOKEN_DECIMALS) continue;
