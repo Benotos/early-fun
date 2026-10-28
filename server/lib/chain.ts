@@ -68,7 +68,7 @@ export interface TxQuery {
 
 export interface Chain {
   probe(): Promise<{ ok: boolean; detail: string }>;
-  listMigrations(opts: { untilSig?: string | null; minTime: number; maxPages?: number }): Promise<SigInfo[]>;
+  listMigrations(opts: { untilSig?: string | null; beforeSig?: string | null; minTime: number; maxPages?: number }): Promise<SigInfo[]>;
   getTx(sig: string): Promise<RawTx | null>;
   txsForAddress(address: string, q: TxQuery): Promise<TxPage>;
   tokenMeta(mint: string): Promise<{ symbol: string; name: string } | null>;
@@ -162,6 +162,7 @@ export class HeliusChain implements Chain {
     for (let page = 0; page < (opts.maxPages ?? 5); page++) {
       const cfg: Record<string, unknown> = { limit: 1000, commitment: 'finalized' };
       if (before) cfg.before = before;
+      else if (opts.beforeSig) cfg.before = opts.beforeSig;
       if (opts.untilSig) cfg.until = opts.untilSig;
       const rows: SigInfo[] = await this.rpc('getSignaturesForAddress', [MIGRATION_ACCOUNT, cfg]);
       if (!rows.length) break;
