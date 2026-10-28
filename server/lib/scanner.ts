@@ -4,7 +4,7 @@ import { CoinState, applyTrades, newCoin, packState, rawBars, unpackState } from
 import { Rules, TOTAL_SUPPLY, num, rules } from './env';
 import { DayBoard, K, TTL_DAY, getSolUsd, readDayBoard, rebuildDay, writeSnapshots } from './boards';
 import { curveAddress } from './pda';
-import { CoinResult, computeResult, packResult, unpackResult } from './scoring';
+import { CoinResult, computeResult, junkReasons, packResult, unpackResult } from './scoring';
 import { Store } from './store';
 import { Trade, describeTx, extractTrade, parseMigration, txFeesSol } from './trades';
 
@@ -63,6 +63,22 @@ export async function saveCoin(store: Store, s: CoinState): Promise<void> {
 }
 
 const RULES_VERSION = 8;
+
+/** seconds between re-reads of a coin, by how long ago it migrated */
+function rescanEvery(ageSec: number): number {
+  if (process.env.RESCAN_BACKOFF === '0') return 0;
+  if (ageSec < 2 * 3600) return 0;
+  if (ageSec < 6 * 3600) return 300;
+  if (ageSec < 12 * 3600) return 900;
+  return 1800;
+}
+
+/** coins that failed a check that can never change */
+function deadForGood(s: CoinState, r: Rules): boolean {
+  if (!s.curveDone) return false;
+  if (s.mh && r.hideMayhem) return true;
+  return junkReasons(s, r).some((x) => x.startsWith('bonding curve only reached'));
+}
 
 async function scanCoin(
   chain: Chain,
@@ -274,18 +290,22 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
         await store.cmd('EXPIRE', K.idx(d), TTL_DAY);
       }
       const h = await store.hgetall(K.idx(d));
-      for (const [m, v] of Object.entries(h)) if (v !== 'f') queue.push({ mint: m, day: d, last: Number(v) || 0 });
+      for (const [m, v] of Object.entries(h)) {
+        if (v === 'f') continue;
+        const [lastS, migS] = String(v).split('|');
+        const last = Number(lastS) || 0;
+        const mig = Number(migS) || 0;
+        // older coins trade less, so they are re-read less often. Saves most of the RPC credits.
+        if (last > 0 && mig > 0 && now - last < rescanEvery(now - mig)) continue;
+        queue.push({ mint: m, day: d, last });
+      }
     }
     // least recently scanned first across both days, so yesterday's coins are never starved by today's
     queue.sort((a, b) => a.last - b.last || (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
     const dirty = new Set<string>();
     for (const q of skipScan ? [] : queue.slice(0, r.maxCoinsPerScan)) {
       if (Date.now() > deadline - 3000) break;
-      let s = await loadCoin(store, q.mint);
-      if (s && s.gf === undefined && !s.final) {
-        // scanned before global fees were tracked: read it again from the start
-        s = newCoin({ mint: s.mint, curve: s.curve, pool: s.pool, migTime: s.migTime, migSig: s.migSig, day: s.day, dayEnd: s.dayEnd, symbol: s.symbol, name: s.name });
-      }
+      const s = await loadCoin(store, q.mint);
       if (!s) {
         await store.cmd('HSET', K.idx(q.day), q.mint, 'f');
         continue;
@@ -300,6 +320,10 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
           if (m !== null) s.mh = m;
         }
         const res = await scanCoin(chain, s, r, now, deadline);
+        if (!s.final && deadForGood(s, r)) {
+          s.final = true; // fake launch or Mayhem: it can never count, stop spending credits on it
+          res.changed = true;
+        }
         if (s.rv !== RULES_VERSION) {
           s.rv = RULES_VERSION;
           res.changed = true; // old results were scored under older rules, rescore
@@ -307,7 +331,7 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
         report.pages += res.pages;
         report.coinsScanned++;
         await saveCoin(store, s);
-        await store.cmd('HSET', K.idx(s.day), s.mint, s.final ? 'f' : String(now));
+        await store.cmd('HSET', K.idx(s.day), s.mint, s.final ? 'f' : `${now}|${s.migTime}`);
         if (res.changed) {
           report.changed++;
           await store.set(K.res(s.mint), packResult(computeResult(s, r, now)), COIN_TTL);

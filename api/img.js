@@ -33306,6 +33306,10 @@ var Store = class {
     if (n === 1 && exSeconds) await this.cmd("EXPIRE", k2, exSeconds);
     return n;
   }
+  /** wipes every key. Used by the admin reset. */
+  async clearAll() {
+    throw new StoreError("not_supported", "Reset is only supported on the Turso database");
+  }
   /** optional housekeeping, called at the end of every scan */
   async maintenance() {
   }
@@ -33586,6 +33590,10 @@ var TursoStore = class extends Store {
       at2 += p.stmts.length;
       return p.map(part);
     });
+  }
+  async clearAll() {
+    await this.ensure();
+    await this.client.batch(["kv", "hs", "zs", "st", "ex"].map((t) => ({ sql: `DELETE FROM ${t}` })), "write");
   }
   /** deletes expired keys, at most every 30 minutes */
   async maintenance() {

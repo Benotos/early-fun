@@ -24317,7 +24317,7 @@ Message: ${transactionMessage}.
       }
       return signature2;
     }
-    function sleep2(ms2) {
+    function sleep3(ms2) {
       return new Promise((resolve) => setTimeout(resolve, ms2));
     }
     function encodeData(type, fields) {
@@ -25127,7 +25127,7 @@ Message: ${transactionMessage}.
           }));
           if (connection._rpcEndpoint.includes("solana.com")) {
             const REQUESTS_PER_SECOND = 4;
-            await sleep2(1e3 / REQUESTS_PER_SECOND);
+            await sleep3(1e3 / REQUESTS_PER_SECOND);
           }
           offset += chunkSize;
           array2 = array2.slice(chunkSize);
@@ -26300,7 +26300,7 @@ Message: ${transactionMessage}.
               break;
             }
             console.error(`Server responded with ${res.status} ${res.statusText}.  Retrying after ${waitTime}ms delay...`);
-            await sleep2(waitTime);
+            await sleep3(waitTime);
             waitTime *= 2;
           }
           const text = await res.text();
@@ -27423,7 +27423,7 @@ Message: ${transactionMessage}.
             let currentBlockHeight = await checkBlockHeight();
             if (done) return;
             while (currentBlockHeight <= lastValidBlockHeight) {
-              await sleep2(1e3);
+              await sleep3(1e3);
               if (done) return;
               currentBlockHeight = await checkBlockHeight();
               if (done) return;
@@ -27495,7 +27495,7 @@ Message: ${transactionMessage}.
                 });
                 return;
               }
-              await sleep2(2e3);
+              await sleep3(2e3);
               if (done) return;
               currentNonceValue = await getCurrentNonceValue();
               if (done) return;
@@ -27523,7 +27523,7 @@ Message: ${transactionMessage}.
                 break;
               }
               if (status.context.slot < (outcome.slotInWhichNonceDidAdvance ?? minContextSlot)) {
-                await sleep2(400);
+                await sleep3(400);
                 continue;
               }
               signatureStatus = status;
@@ -28595,7 +28595,7 @@ Message: ${transactionMessage}.
       async _blockhashWithExpiryBlockHeight(disableCache) {
         if (!disableCache) {
           while (this._pollingBlockhash) {
-            await sleep2(100);
+            await sleep3(100);
           }
           const timeSinceFetch = Date.now() - this._blockhashInfo.lastFetch;
           const expired = timeSinceFetch >= BLOCKHASH_CACHE_TIMEOUT_MS;
@@ -28625,7 +28625,7 @@ Message: ${transactionMessage}.
               };
               return latestBlockhash;
             }
-            await sleep2(MS_PER_SLOT / 2);
+            await sleep3(MS_PER_SLOT / 2);
           }
           throw new Error(`Unable to obtain a new blockhash after ${Date.now() - startTime}ms`);
         } finally {
@@ -35937,7 +35937,7 @@ function junkReasons(s, r) {
   }
   if (s.curveDone && cpk * TOTAL_SUPPLY < r.minCurveMcSol) why.push(`bonding curve only reached ${Math.round(cpk * TOTAL_SUPPLY)} SOL market cap, a real migration ends near 410`);
   if (s.mh && r.hideMayhem) why.push("pump.fun Mayhem Mode coin");
-  if ((s.gf || 0) < r.minGlobalFeesSol) why.push(`traders paid ${(s.gf || 0).toFixed(2)} SOL in global fees, minimum is ${r.minGlobalFeesSol}`);
+  if (s.gf !== void 0 && s.gf < r.minGlobalFeesSol) why.push(`traders paid ${s.gf.toFixed(2)} SOL in global fees, minimum is ${r.minGlobalFeesSol}`);
   if (s.trades < r.minCoinTrades) why.push(`only ${s.trades} trades, minimum is ${r.minCoinTrades}`);
   const wallets = (/* @__PURE__ */ new Set([...Object.keys(s.pnl), ...Object.keys(s.buys)])).size;
   if (wallets < r.minCoinWallets) why.push(`only ${wallets} wallets traded it, minimum is ${r.minCoinWallets}`);
@@ -36398,6 +36398,18 @@ async function saveCoin(store, s) {
   await store.set(K.coin(s.mint), packed, COIN_TTL);
 }
 var RULES_VERSION = 8;
+function rescanEvery(ageSec) {
+  if (process.env.RESCAN_BACKOFF === "0") return 0;
+  if (ageSec < 2 * 3600) return 0;
+  if (ageSec < 6 * 3600) return 300;
+  if (ageSec < 12 * 3600) return 900;
+  return 1800;
+}
+function deadForGood(s, r) {
+  if (!s.curveDone) return false;
+  if (s.mh && r.hideMayhem) return true;
+  return junkReasons(s, r).some((x) => x.startsWith("bonding curve only reached"));
+}
 async function scanCoin(chain, s, r, now, deadline) {
   let pages = 0;
   let changed = false;
@@ -36581,16 +36593,20 @@ async function runScan(o) {
         await store.cmd("EXPIRE", K.idx(d), TTL_DAY);
       }
       const h = await store.hgetall(K.idx(d));
-      for (const [m, v] of Object.entries(h)) if (v !== "f") queue.push({ mint: m, day: d, last: Number(v) || 0 });
+      for (const [m, v] of Object.entries(h)) {
+        if (v === "f") continue;
+        const [lastS, migS] = String(v).split("|");
+        const last = Number(lastS) || 0;
+        const mig = Number(migS) || 0;
+        if (last > 0 && mig > 0 && now - last < rescanEvery(now - mig)) continue;
+        queue.push({ mint: m, day: d, last });
+      }
     }
     queue.sort((a, b) => a.last - b.last || (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
     const dirty = /* @__PURE__ */ new Set();
     for (const q of skipScan ? [] : queue.slice(0, r.maxCoinsPerScan)) {
       if (Date.now() > deadline - 3e3) break;
-      let s = await loadCoin(store, q.mint);
-      if (s && s.gf === void 0 && !s.final) {
-        s = newCoin({ mint: s.mint, curve: s.curve, pool: s.pool, migTime: s.migTime, migSig: s.migSig, day: s.day, dayEnd: s.dayEnd, symbol: s.symbol, name: s.name });
-      }
+      const s = await loadCoin(store, q.mint);
       if (!s) {
         await store.cmd("HSET", K.idx(q.day), q.mint, "f");
         continue;
@@ -36605,6 +36621,10 @@ async function runScan(o) {
           if (m !== null) s.mh = m;
         }
         const res = await scanCoin(chain, s, r, now, deadline);
+        if (!s.final && deadForGood(s, r)) {
+          s.final = true;
+          res.changed = true;
+        }
         if (s.rv !== RULES_VERSION) {
           s.rv = RULES_VERSION;
           res.changed = true;
@@ -36612,7 +36632,7 @@ async function runScan(o) {
         report.pages += res.pages;
         report.coinsScanned++;
         await saveCoin(store, s);
-        await store.cmd("HSET", K.idx(s.day), s.mint, s.final ? "f" : String(now));
+        await store.cmd("HSET", K.idx(s.day), s.mint, s.final ? "f" : `${now}|${s.migTime}`);
         if (res.changed) {
           report.changed++;
           await store.set(K.res(s.mint), packResult(computeResult(s, r, now)), COIN_TTL);
@@ -41376,6 +41396,10 @@ var Store = class {
     if (n === 1 && exSeconds) await this.cmd("EXPIRE", k, exSeconds);
     return n;
   }
+  /** wipes every key. Used by the admin reset. */
+  async clearAll() {
+    throw new StoreError("not_supported", "Reset is only supported on the Turso database");
+  }
   /** optional housekeeping, called at the end of every scan */
   async maintenance() {
   }
@@ -41657,6 +41681,10 @@ var TursoStore = class extends Store {
       return p.map(part);
     });
   }
+  async clearAll() {
+    await this.ensure();
+    await this.client.batch(["kv", "hs", "zs", "st", "ex"].map((t) => ({ sql: `DELETE FROM ${t}` })), "write");
+  }
   /** deletes expired keys, at most every 30 minutes */
   async maintenance() {
     const now = Math.floor(Date.now() / 1e3);
@@ -41735,17 +41763,30 @@ function getStore() {
 }
 
 // server/worker.ts
+var sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
 async function main() {
-  const budget = Number(process.env.WORKER_BUDGET_SEC || 270) * 1e3;
-  const end = Date.now() + budget;
+  const minutes = Number(process.env.WORKER_MINUTES || 50);
+  const end = Date.now() + minutes * 6e4;
   const store = getStore();
-  const chain = new HeliusChain();
-  let rep;
-  do {
-    rep = await runScan({ store, chain, budgetMs: Math.max(1e4, end - Date.now()) });
-    console.log(JSON.stringify(rep));
-  } while (rep.status === "ok" && (rep.changed > 0 || rep.newCoins > 0) && Date.now() < end - 2e4);
-  if (rep.status === "aborted" || rep.status === "error") process.exitCode = 1;
+  let runs = 0;
+  let coins = 0;
+  while (Date.now() < end - 7e4) {
+    try {
+      const rep = await runScan({ store, chain: new HeliusChain(), budgetMs: 5e4 });
+      runs++;
+      coins += rep.coinsScanned;
+      console.log(
+        `${(/* @__PURE__ */ new Date()).toISOString().slice(11, 19)} ${rep.status} new=${rep.newCoins} scanned=${rep.coinsScanned} boards=${rep.boardsBuilt.join(",") || "-"} ${rep.errors.length ? "errors=" + rep.errors.slice(0, 3).join(" | ") : ""}${rep.reason ? " reason=" + rep.reason : ""}`
+      );
+      if (rep.status === "locked") await sleep2(15e3);
+      else if (rep.status !== "ok") await sleep2(3e4);
+      else if (rep.newCoins === 0 && rep.coinsScanned === 0 && rep.boardsBuilt.length === 0) await sleep2(2e4);
+    } catch (e) {
+      console.error("scan failed:", e instanceof Error ? e.message : e);
+      await sleep2(3e4);
+    }
+  }
+  console.log(`done: ${runs} scans, ${coins} coin reads`);
 }
 main().catch((e) => {
   console.error(e);

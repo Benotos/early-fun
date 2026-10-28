@@ -249,6 +249,11 @@ export class TursoStore extends Store {
     });
   }
 
+  async clearAll(): Promise<void> {
+    await this.ensure();
+    await this.client.batch(['kv', 'hs', 'zs', 'st', 'ex'].map((t) => ({ sql: `DELETE FROM ${t}` })), 'write');
+  }
+
   /** deletes expired keys, at most every 30 minutes */
   async maintenance(): Promise<void> {
     const now = Math.floor(Date.now() / 1000);

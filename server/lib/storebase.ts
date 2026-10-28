@@ -37,6 +37,10 @@ export abstract class Store {
     if (n === 1 && exSeconds) await this.cmd('EXPIRE', k, exSeconds);
     return n;
   }
+  /** wipes every key. Used by the admin reset. */
+  async clearAll(): Promise<void> {
+    throw new StoreError('not_supported', 'Reset is only supported on the Turso database');
+  }
   /** optional housekeeping, called at the end of every scan */
   async maintenance(): Promise<void> {}
   async hget(k: string, f: string): Promise<string | null> {

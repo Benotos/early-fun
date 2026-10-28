@@ -10,6 +10,11 @@ export default route(async ({ req, q }) => {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   const given = bearer || q.get('secret') || '';
   if (!given || !safeEqual(given, secret)) throw new HttpError(401, 'unauthorized', 'Bad cron secret');
+  if (q.get('reset') === 'wipe-everything') {
+    // starts the site from zero: boards, coins, charts, cached funders. The scanner refills today's coins.
+    await getStore().clearAll();
+    return { json: { ok: true, reset: true, note: 'All data cleared. The scanner refills today from the start of the UTC day.' } };
+  }
   const report = await runScan({ store: getStore(), chain: new HeliusChain(), budgetMs: 15000 });
   return { json: report };
 });

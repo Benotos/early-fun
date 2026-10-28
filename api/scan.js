@@ -36042,7 +36042,7 @@ function junkReasons(s, r) {
   }
   if (s.curveDone && cpk * TOTAL_SUPPLY < r.minCurveMcSol) why.push(`bonding curve only reached ${Math.round(cpk * TOTAL_SUPPLY)} SOL market cap, a real migration ends near 410`);
   if (s.mh && r.hideMayhem) why.push("pump.fun Mayhem Mode coin");
-  if ((s.gf || 0) < r.minGlobalFeesSol) why.push(`traders paid ${(s.gf || 0).toFixed(2)} SOL in global fees, minimum is ${r.minGlobalFeesSol}`);
+  if (s.gf !== void 0 && s.gf < r.minGlobalFeesSol) why.push(`traders paid ${s.gf.toFixed(2)} SOL in global fees, minimum is ${r.minGlobalFeesSol}`);
   if (s.trades < r.minCoinTrades) why.push(`only ${s.trades} trades, minimum is ${r.minCoinTrades}`);
   const wallets = (/* @__PURE__ */ new Set([...Object.keys(s.pnl), ...Object.keys(s.buys)])).size;
   if (wallets < r.minCoinWallets) why.push(`only ${wallets} wallets traded it, minimum is ${r.minCoinWallets}`);
@@ -36503,6 +36503,18 @@ async function saveCoin(store, s) {
   await store.set(K.coin(s.mint), packed, COIN_TTL);
 }
 var RULES_VERSION = 8;
+function rescanEvery(ageSec) {
+  if (process.env.RESCAN_BACKOFF === "0") return 0;
+  if (ageSec < 2 * 3600) return 0;
+  if (ageSec < 6 * 3600) return 300;
+  if (ageSec < 12 * 3600) return 900;
+  return 1800;
+}
+function deadForGood(s, r) {
+  if (!s.curveDone) return false;
+  if (s.mh && r.hideMayhem) return true;
+  return junkReasons(s, r).some((x) => x.startsWith("bonding curve only reached"));
+}
 async function scanCoin(chain, s, r, now, deadline) {
   let pages = 0;
   let changed = false;
@@ -36686,16 +36698,20 @@ async function runScan(o) {
         await store.cmd("EXPIRE", K.idx(d), TTL_DAY);
       }
       const h = await store.hgetall(K.idx(d));
-      for (const [m, v] of Object.entries(h)) if (v !== "f") queue.push({ mint: m, day: d, last: Number(v) || 0 });
+      for (const [m, v] of Object.entries(h)) {
+        if (v === "f") continue;
+        const [lastS, migS] = String(v).split("|");
+        const last = Number(lastS) || 0;
+        const mig = Number(migS) || 0;
+        if (last > 0 && mig > 0 && now - last < rescanEvery(now - mig)) continue;
+        queue.push({ mint: m, day: d, last });
+      }
     }
     queue.sort((a, b) => a.last - b.last || (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
     const dirty = /* @__PURE__ */ new Set();
     for (const q of skipScan ? [] : queue.slice(0, r.maxCoinsPerScan)) {
       if (Date.now() > deadline - 3e3) break;
-      let s = await loadCoin(store, q.mint);
-      if (s && s.gf === void 0 && !s.final) {
-        s = newCoin({ mint: s.mint, curve: s.curve, pool: s.pool, migTime: s.migTime, migSig: s.migSig, day: s.day, dayEnd: s.dayEnd, symbol: s.symbol, name: s.name });
-      }
+      const s = await loadCoin(store, q.mint);
       if (!s) {
         await store.cmd("HSET", K.idx(q.day), q.mint, "f");
         continue;
@@ -36710,6 +36726,10 @@ async function runScan(o) {
           if (m !== null) s.mh = m;
         }
         const res = await scanCoin(chain, s, r, now, deadline);
+        if (!s.final && deadForGood(s, r)) {
+          s.final = true;
+          res.changed = true;
+        }
         if (s.rv !== RULES_VERSION) {
           s.rv = RULES_VERSION;
           res.changed = true;
@@ -36717,7 +36737,7 @@ async function runScan(o) {
         report.pages += res.pages;
         report.coinsScanned++;
         await saveCoin(store, s);
-        await store.cmd("HSET", K.idx(s.day), s.mint, s.final ? "f" : String(now));
+        await store.cmd("HSET", K.idx(s.day), s.mint, s.final ? "f" : `${now}|${s.migTime}`);
         if (res.changed) {
           report.changed++;
           await store.set(K.res(s.mint), packResult(computeResult(s, r, now)), COIN_TTL);
@@ -41481,6 +41501,10 @@ var Store = class {
     if (n === 1 && exSeconds) await this.cmd("EXPIRE", k, exSeconds);
     return n;
   }
+  /** wipes every key. Used by the admin reset. */
+  async clearAll() {
+    throw new StoreError("not_supported", "Reset is only supported on the Turso database");
+  }
   /** optional housekeeping, called at the end of every scan */
   async maintenance() {
   }
@@ -41762,6 +41786,10 @@ var TursoStore = class extends Store {
       return p.map(part);
     });
   }
+  async clearAll() {
+    await this.ensure();
+    await this.client.batch(["kv", "hs", "zs", "st", "ex"].map((t) => ({ sql: `DELETE FROM ${t}` })), "write");
+  }
   /** deletes expired keys, at most every 30 minutes */
   async maintenance() {
     const now = Math.floor(Date.now() / 1e3);
@@ -41846,6 +41874,10 @@ var scan_default = route(async ({ req, q }) => {
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   const given = bearer || q.get("secret") || "";
   if (!given || !safeEqual(given, secret)) throw new HttpError(401, "unauthorized", "Bad cron secret");
+  if (q.get("reset") === "wipe-everything") {
+    await getStore().clearAll();
+    return { json: { ok: true, reset: true, note: "All data cleared. The scanner refills today from the start of the UTC day." } };
+  }
   const report = await runScan({ store: getStore(), chain: new HeliusChain(), budgetMs: 15e3 });
   return { json: report };
 });

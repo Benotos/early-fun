@@ -35452,7 +35452,7 @@ function junkReasons(s, r) {
   }
   if (s.curveDone && cpk * TOTAL_SUPPLY < r.minCurveMcSol) why.push(`bonding curve only reached ${Math.round(cpk * TOTAL_SUPPLY)} SOL market cap, a real migration ends near 410`);
   if (s.mh && r.hideMayhem) why.push("pump.fun Mayhem Mode coin");
-  if ((s.gf || 0) < r.minGlobalFeesSol) why.push(`traders paid ${(s.gf || 0).toFixed(2)} SOL in global fees, minimum is ${r.minGlobalFeesSol}`);
+  if (s.gf !== void 0 && s.gf < r.minGlobalFeesSol) why.push(`traders paid ${s.gf.toFixed(2)} SOL in global fees, minimum is ${r.minGlobalFeesSol}`);
   if (s.trades < r.minCoinTrades) why.push(`only ${s.trades} trades, minimum is ${r.minCoinTrades}`);
   const wallets = (/* @__PURE__ */ new Set([...Object.keys(s.pnl), ...Object.keys(s.buys)])).size;
   if (wallets < r.minCoinWallets) why.push(`only ${wallets} wallets traded it, minimum is ${r.minCoinWallets}`);
@@ -40324,6 +40324,10 @@ var Store = class {
     if (n === 1 && exSeconds) await this.cmd("EXPIRE", k, exSeconds);
     return n;
   }
+  /** wipes every key. Used by the admin reset. */
+  async clearAll() {
+    throw new StoreError("not_supported", "Reset is only supported on the Turso database");
+  }
   /** optional housekeeping, called at the end of every scan */
   async maintenance() {
   }
@@ -40604,6 +40608,10 @@ var TursoStore = class extends Store {
       at += p.stmts.length;
       return p.map(part);
     });
+  }
+  async clearAll() {
+    await this.ensure();
+    await this.client.batch(["kv", "hs", "zs", "st", "ex"].map((t) => ({ sql: `DELETE FROM ${t}` })), "write");
   }
   /** deletes expired keys, at most every 30 minutes */
   async maintenance() {
