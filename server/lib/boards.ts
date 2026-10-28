@@ -76,7 +76,7 @@ export function trackedCoinResults(
   r: Rules,
   blocked: Set<string> = blockedMints()
 ): CoinResult[] {
-  return results.filter((c) => !blocked.has(c.mint) && (c.gf ?? 0) >= r.minGlobalFeesSol);
+  return results.filter((c) => !c.jk && !blocked.has(c.mint) && (c.gf ?? 0) >= r.minGlobalFeesSol);
 }
 
 export async function rebuildDay(
