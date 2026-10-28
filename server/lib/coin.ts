@@ -22,6 +22,13 @@ export interface WalletPnl {
   sn?: 1;
   /** number of trades by this wallet on the coin, bots trade far more than people */
   n?: number;
+  /** Remaining purchased-token inventory and its average-cost basis. */
+  inventoryTokens?: number;
+  inventoryCostSol?: number;
+  /** Sell quantity, cost basis, and proceeds matched to tokens this wallet actually bought. */
+  matchedSoldTokens?: number;
+  matchedSoldCostSol?: number;
+  matchedSoldProceedsSol?: number;
 }
 
 export type Bar = [number, number, number, number?, number?];
@@ -172,6 +179,8 @@ export function applyTrades(s: CoinState, trades: Trade[], r: Rules): void {
     if (t.side === 'buy') {
       p.bs += t.sol;
       p.bt += t.tokens;
+      p.inventoryTokens = (p.inventoryTokens || 0) + t.tokens;
+      p.inventoryCostSol = (p.inventoryCostSol || 0) + t.sol;
       if (!p.fb) p.fb = t.time;
       p.lb = t.time;
       if (t.sol >= r.minBuySol) {
@@ -186,12 +195,35 @@ export function applyTrades(s: CoinState, trades: Trade[], r: Rules): void {
       p.ss += t.sol;
       p.st += t.tokens;
       p.ls = t.time;
+
+      // Count only the portion of a sale that can be matched to tokens previously
+      // bought by this wallet through the tracked venue. Any excess sale quantity
+      // may have come from a transfer and must not generate fabricated profit.
+      const inventoryTokens = p.inventoryTokens || 0;
+      const inventoryCostSol = p.inventoryCostSol || 0;
+      if (inventoryTokens > 0 && t.tokens > 0) {
+        const matchedTokens = Math.min(t.tokens, inventoryTokens);
+        const matchedCost = inventoryCostSol * (matchedTokens / inventoryTokens);
+        const matchedProceeds = t.sol * (matchedTokens / t.tokens);
+        p.matchedSoldTokens = (p.matchedSoldTokens || 0) + matchedTokens;
+        p.matchedSoldCostSol = (p.matchedSoldCostSol || 0) + matchedCost;
+        p.matchedSoldProceedsSol = (p.matchedSoldProceedsSol || 0) + matchedProceeds;
+        p.inventoryTokens = Math.max(0, inventoryTokens - matchedTokens);
+        p.inventoryCostSol = Math.max(0, inventoryCostSol - matchedCost);
+      }
     }
   }
 }
 
 function blank(): WalletPnl {
-  return { bs: 0, ss: 0, bt: 0, st: 0, fb: 0, lb: 0, ls: 0 };
+  return {
+    bs: 0, ss: 0, bt: 0, st: 0, fb: 0, lb: 0, ls: 0,
+    inventoryTokens: 0,
+    inventoryCostSol: 0,
+    matchedSoldTokens: 0,
+    matchedSoldCostSol: 0,
+    matchedSoldProceedsSol: 0,
+  };
 }
 
 /** Highest price at or after the given slot. */
