@@ -68,8 +68,10 @@ export interface CoinState {
   mh?: boolean;
   /** rules version this state was last scored under */
   rv?: number;
-  /** Existing aggregation is being rebuilt after an accounting change. */
+  /** Existing published result is retained until the bonding curve has been replayed. */
   rebuildPending?: boolean;
+  /** Bypasses age based scan backoff until a historical accounting replay is final. */
+  replayAccounting?: boolean;
   /** price path: [bucket, close, high, open, low] in SOL per token (open and low absent on old states) */
   ser: Bar[];
   /** seconds per price bucket, absent on old states (60) */
