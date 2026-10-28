@@ -119,7 +119,7 @@ export default route(async ({ q, ip }) => {
             if (junkReasons(walletState, r).length) return;
             const x = realizedOf(walletState, address);
             if (!x || !Number.isFinite(x.pnl) || Math.abs(x.pnl) < 0.00005) return;
-            const key = coinKey(profileState.day, mint);
+            const key = coinKey(state.day, mint);
 
             if (x.pnl > 0) {
               if (x.mult < r.minRealizedMult || x.buyMc < r.minEntryMcSol) return;
@@ -245,7 +245,7 @@ export default route(async ({ q, ip }) => {
         };
         const x = realizedOf(walletState, address);
         if (!x || !Number.isFinite(x.pnl) || Math.abs(x.pnl) < 0.00005) continue;
-        const key = coinKey(state.day, mint);
+        const key = coinKey(profileState.day, mint);
 
         if (x.pnl > 0 && !winByCoin.has(key)) {
           const firstBuy = ledger.buys[0];
