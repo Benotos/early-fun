@@ -127,7 +127,7 @@ async function persistWalletLedgers(store: Store, s: CoinState, trades: Trade[],
   const wallets = [...byWallet.keys()];
   const key = K.walletCoin(s.mint);
   const previous = await store.run(wallets.map((wallet) => ['HGET', key, wallet]));
-  const fields: unknown[] = [];
+  const fields: (string | number)[] = [];
   wallets.forEach((wallet, i) => {
     let ledger = emptyWalletCoinLedger();
     if (typeof previous[i] === 'string') {
