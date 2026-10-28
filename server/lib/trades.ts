@@ -3,6 +3,7 @@ import { TOKEN_DECIMALS, WSOL } from './env';
 
 export interface Trade {
   sig: string;
+  mint?: string;
   slot: number;
   time: number;
   wallet: string;
