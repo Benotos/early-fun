@@ -19,7 +19,7 @@ export default function MyStanding() {
     winsToday.sort((a, b) => b.mult - a.mult)[0];
   const l = data?.losses.filter((x) => x.day === today).sort((a, b) => b.lossSol - a.lossSol)[0];
   const st = data ? walletStats(data) : null;
-  const tier = st ? tierFor(st.bestWin?.mult ?? 0, st.bestLoss?.lossSol ?? 0) : null;
+  const tier = st ? tierFor(st.bestWin?.mult ?? 0, st.bestLoss?.lossSol ?? 0, st.netRealizedSol) : null;
   return (
     <div className="standing">
       <Avatar address={me} size={46} />

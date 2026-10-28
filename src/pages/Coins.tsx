@@ -29,7 +29,7 @@ export default function Coins() {
       <div className="wrap">
         <div className="eyebrow mono">EVERY COIN WE TRACK</div>
         <h2>Coins</h2>
-        <p className="dim sub-lede">Every pump.fun coin that migrated recently, with its price path and the best entry we found on it.</p>
+        <p className="dim sub-lede">Every tracked Pump.fun migration that has accrued at least 1 SOL in global fees. Leaderboard entries still have separate trade-quality and anti-abuse checks.</p>
         <div className="toolbar">
           <div className="chips">
             {(['today', 'yesterday', 'week'] as Win[]).map((w) => (

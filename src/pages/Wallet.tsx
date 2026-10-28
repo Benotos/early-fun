@@ -69,7 +69,7 @@ export default function Wallet() {
 
   const stats = useMemo(() => (data ? walletStats(data) : null), [data]);
   const bestEntryMult = Math.max(0, ...(data?.wins || []).map((x) => x.mult));
-  const tier = stats ? tierFor(bestEntryMult, stats.bestLoss?.lossSol ?? 0) : null;
+  const tier = stats ? tierFor(bestEntryMult, stats.bestLoss?.lossSol ?? 0, stats.netRealizedSol) : null;
   const ltag = stats?.bestLoss ? lossTag(stats.bestLoss.lossSol) : null;
 
   useEffect(() => {
