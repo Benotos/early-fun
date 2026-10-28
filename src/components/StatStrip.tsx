@@ -1,11 +1,13 @@
-import { fmtMult, fmtSol } from '../../shared/format';
+import { fmtSol } from '../../shared/format';
 import { useBoard } from '../lib/api';
 import CountUp from './CountUp';
 import Countdown from './Countdown';
 
 export default function StatStrip() {
   const { data } = useBoard('today');
-  const w = data?.winners[0];
+  const bestProfit = (data?.winners || [])
+    .filter((row) => row.pnlSol !== undefined)
+    .sort((a, b) => (b.pnlSol ?? 0) - (a.pnlSol ?? 0))[0];
   const l = data?.losers[0];
   const tiles = [
     {
@@ -13,7 +15,12 @@ export default function StatStrip() {
       v: data ? <CountUp value={data.meta.coins} format={(n) => Math.round(n).toString()} /> : '...',
       s: 'migrated from pump.fun',
     },
-    { k: 'Best entry today', v: w ? <CountUp value={w.mult} format={fmtMult} /> : '-', s: w ? '$' + w.symbol.toUpperCase() : 'waiting for data', tone: 'win' },
+    {
+      k: 'Best profit today',
+      v: bestProfit ? <>+<CountUp value={bestProfit.pnlSol ?? 0} format={fmtSol} /> SOL</> : '-',
+      s: bestProfit ? '$' + bestProfit.symbol.toUpperCase() : 'waiting for data',
+      tone: 'win',
+    },
     { k: 'Biggest L today', v: l ? <>-<CountUp value={l.lossSol} format={fmtSol} /> SOL</> : '-', s: l ? '$' + l.symbol.toUpperCase() : 'waiting for data', tone: 'loss' },
     { k: 'Boards reset in', v: <Countdown resetAt={data?.meta.resetAt} />, s: '00:00 UTC' },
   ];
