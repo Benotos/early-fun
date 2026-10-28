@@ -100,13 +100,46 @@ export function useCoin(mint: string) {
   useEffect(() => {
     if (!mint) return;
     let alive = true;
+    let loading = false;
+    let gotData = false;
     setData(null);
     setError(null);
-    api<CoinResponse>(`/api/coindata?mint=${encodeURIComponent(mint)}`)
-      .then((d) => alive && setData(d))
-      .catch((e) => alive && setError(e instanceof Error ? e.message : 'Failed to load'));
+
+    const load = async () => {
+      if (!alive || loading) return;
+      loading = true;
+      try {
+        // The coin page is a live view of scanner updates. Bypass browser/CDN
+        // caching and refresh frequently without allowing overlapping requests.
+        const d = await api<CoinResponse>(
+          `/api/coindata?mint=${encodeURIComponent(mint)}&_=${Date.now()}`,
+          { cache: 'no-store' }
+        );
+        if (alive) {
+          gotData = true;
+          setData(d);
+          setError(null);
+        }
+      } catch (e) {
+        // Keep the last good chart visible if one refresh fails.
+        if (alive && !gotData) setError(e instanceof Error ? e.message : 'Failed to load');
+      } finally {
+        loading = false;
+      }
+    };
+
+    void load();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void load();
+    }, 5000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [mint]);
   return { data, error };
