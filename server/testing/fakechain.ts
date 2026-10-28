@@ -174,10 +174,15 @@ export class FakeChain implements Chain {
     return this.probeOk ? { ok: true, detail: 'fake ok' } : { ok: false, detail: 'fake rpc broken' };
   }
 
-  async listMigrations(o: { untilSig?: string | null; minTime: number; maxPages?: number }) {
+  async listMigrations(o: { untilSig?: string | null; beforeSig?: string | null; minTime: number; maxPages?: number }) {
     const sorted = [...this.migs].sort((a, b) => b.slot - a.slot);
     const out: SigInfo[] = [];
+    let pastBefore = !o.beforeSig;
     for (const m of sorted) {
+      if (!pastBefore) {
+        if (m.signature === o.beforeSig) pastBefore = true;
+        continue;
+      }
       if (o.untilSig && m.signature === o.untilSig) break;
       if ((m.blockTime ?? 0) < o.minTime) break;
       out.push(m);
