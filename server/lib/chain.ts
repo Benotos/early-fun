@@ -1,4 +1,7 @@
+import { PublicKey } from '@solana/web3.js';
 import { getEnv, MIGRATION_ACCOUNT, PUMP_PROGRAM, WSOL } from './env';
+
+const TOKEN_METADATA_PROGRAM = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 
 export interface TokenBalance {
   accountIndex: number;
@@ -187,12 +190,45 @@ export class HeliusChain implements Chain {
   }
 
   async tokenMeta(mint: string) {
+    // Ask Helius DAS first because it may already have the off-chain token metadata indexed.
     try {
       const r: any = await this.rpc('getAsset', { id: mint }, 12000);
       const m = r?.content?.metadata;
       const symbol = String(m?.symbol || r?.token_info?.symbol || '').trim();
+      if (symbol) return { symbol: symbol.replace(/\0/g, '').slice(0, 12), name: String(m?.name || symbol).trim().slice(0, 40) };
+    } catch {
+      // Fall back to the on-chain Metaplex metadata account below.
+    }
+
+    // Pump.fun coins can have valid on-chain Metaplex symbols before indexers
+    // have populated their token tables. Derive the metadata PDA and read the
+    // name/symbol strings directly from its binary account data.
+    try {
+      const metadataAddress = PublicKey.findProgramAddressSync(
+        [Buffer.from('metadata'), TOKEN_METADATA_PROGRAM.toBuffer(), new PublicKey(mint).toBuffer()],
+        TOKEN_METADATA_PROGRAM
+      )[0].toBase58();
+      const account: any = await this.rpc('getAccountInfo', [
+        metadataAddress,
+        { encoding: 'base64', commitment: 'finalized' },
+      ], 8000);
+      const encoded = account?.value?.data?.[0];
+      if (typeof encoded !== 'string') return null;
+      const data = Buffer.from(encoded, 'base64');
+      // Key (1) + update authority (32) + mint (32), then Borsh strings.
+      let offset = 65;
+      if (data.length < offset + 4) return null;
+      const nameLength = data.readUInt32LE(offset);
+      offset += 4;
+      if (nameLength > 512 || offset + nameLength + 4 > data.length) return null;
+      const name = data.subarray(offset, offset + nameLength).toString('utf8').replace(/\0/g, '').trim();
+      offset += nameLength;
+      const symbolLength = data.readUInt32LE(offset);
+      offset += 4;
+      if (symbolLength > 128 || offset + symbolLength > data.length) return null;
+      const symbol = data.subarray(offset, offset + symbolLength).toString('utf8').replace(/\0/g, '').trim();
       if (!symbol) return null;
-      return { symbol: symbol.slice(0, 12), name: String(m?.name || symbol).slice(0, 40) };
+      return { symbol: symbol.slice(0, 12), name: (name || symbol).slice(0, 40) };
     } catch {
       return null;
     }
