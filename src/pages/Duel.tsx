@@ -56,7 +56,7 @@ function Picker() {
 
 function Side({ address, data, crown }: { address: string; data: WalletResponse | null; crown: boolean }) {
   const st = data ? walletStats(data) : null;
-  const tier = st ? tierFor(st.bestWin?.mult ?? 0, st.bestLoss?.lossSol ?? 0) : null;
+  const tier = st ? tierFor(st.bestWin?.mult ?? 0, st.bestLoss?.lossSol ?? 0, st.netRealizedSol) : null;
   return (
     <div className={'duel-side' + (crown ? ' crown' : '')}>
       {crown && <span className="crown-i" aria-label="Winner">♛</span>}
