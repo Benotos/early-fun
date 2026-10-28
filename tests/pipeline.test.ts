@@ -22,7 +22,7 @@ async function scanAll(world: ReturnType<typeof buildWorld>, now = NOW, max = 40
 describe('end to end scan with synthetic chain', () => {
   it('discovers older migrated coins through the resumable history cursor', async () => {
     const chain = new FakeChain();
-    const older = addCoin(chain, { symbol: 'OLD', createTime: t(8, 0, 21), migTime: t(8, 20, 21), seed: 101 });
+    const older = addCoin(chain, { symbol: 'OLD', createTime: t(8, 0, 0, 21), migTime: t(8, 20, 0, 21), seed: 101 });
     addCoin(chain, { symbol: 'NEW', createTime: t(8, 0), migTime: t(8, 20), seed: 102 });
 
     // Keep the synthetic migration ordering deterministic and simulate a live cursor
