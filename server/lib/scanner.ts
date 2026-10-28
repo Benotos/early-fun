@@ -1,6 +1,6 @@
 import { addDays, dayKey, dayStart } from '../../shared/format';
 import { Chain, txKeys } from './chain';
-import { CoinState, applyTrades, newCoin, packState, rawBars, unpackState } from './coin';
+import { CoinState, WalletCoinLedger, applyTrades, applyWalletLedgerTrades, newCoin, packState, rawBars, unpackState } from './coin';
 import { Rules, TOTAL_SUPPLY, num, rules } from './env';
 import { DayBoard, K, TTL_DAY, getSolUsd, readDayBoard, rebuildDay, writeSnapshots } from './boards';
 import { curveAddress } from './pda';
@@ -63,7 +63,8 @@ export async function saveCoin(store: Store, s: CoinState): Promise<void> {
 }
 
 const RULES_VERSION = 9;
-const SCORING_VERSION = 10;
+const SCORING_VERSION = 11;
+const WALLET_LEDGER_VERSION = 1;
 
 /** seconds between re-reads of a coin, by how long ago it migrated */
 function rescanEvery(ageSec: number): number {
@@ -102,6 +103,50 @@ function resetTradeAccounting(s: CoinState): void {
   s.replayAccounting = true;
 }
 
+function emptyWalletCoinLedger(): WalletCoinLedger {
+  return {
+    pnl: {
+      bs: 0, ss: 0, bt: 0, st: 0, fb: 0, lb: 0, ls: 0,
+      inventoryTokens: 0, inventoryCostSol: 0,
+      matchedSoldTokens: 0, matchedSoldCostSol: 0, matchedSoldProceedsSol: 0,
+    },
+    buys: [],
+  };
+}
+
+async function persistWalletLedgers(store: Store, s: CoinState, trades: Trade[], r: Rules): Promise<void> {
+  const byWallet = new Map<string, Trade[]>();
+  for (const t of trades) {
+    if (t.wallet === s.dev) continue;
+    const items = byWallet.get(t.wallet) || [];
+    items.push(t);
+    byWallet.set(t.wallet, items);
+  }
+  if (!byWallet.size) return;
+
+  const wallets = [...byWallet.keys()];
+  const key = K.walletCoin(s.mint);
+  const previous = await store.run(wallets.map((wallet) => ['HGET', key, wallet]));
+  const fields: (string | number)[] = [];
+  wallets.forEach((wallet, i) => {
+    let ledger = emptyWalletCoinLedger();
+    if (typeof previous[i] === 'string') {
+      try {
+        const parsed = JSON.parse(previous[i] as string) as WalletCoinLedger;
+        if (parsed?.pnl && Array.isArray(parsed.buys)) ledger = parsed;
+      } catch {
+        // A bad field must not interrupt scanning other wallets.
+      }
+    }
+    applyWalletLedgerTrades(s, ledger, byWallet.get(wallet) || [], r);
+    fields.push(wallet, JSON.stringify(ledger));
+  });
+  await store.run([
+    ['HSET', key, ...fields],
+    ['EXPIRE', key, COIN_TTL],
+  ]);
+}
+
 /** coins that failed a check that can never change */
 function deadForGood(s: CoinState, r: Rules): boolean {
   if (!s.curveDone) return false;
@@ -110,6 +155,7 @@ function deadForGood(s: CoinState, r: Rules): boolean {
 }
 
 async function scanCoin(
+  store: Store,
   chain: Chain,
   s: CoinState,
   r: Rules,
@@ -138,6 +184,7 @@ async function scanCoin(
       if (t.time < s.dayEnd) s.gf = (s.gf || 0) + txFeesSol(tx);
     }
     applyTrades(s, trades, r);
+    await persistWalletLedgers(store, s, trades, r);
     for (const t of trades) if (t.time < s.dayEnd) s.cpk = Math.max(s.cpk || 0, t.price);
     if (page.txs.length) {
       changed = true;
@@ -170,6 +217,7 @@ async function scanCoin(
         if (t.time < s.dayEnd) s.gf = (s.gf || 0) + txFeesSol(tx);
       }
       applyTrades(s, trades, r);
+      await persistWalletLedgers(store, s, trades, r);
       if (page.txs.length) {
         changed = true;
         s.poolSeen = Math.max(s.poolSeen, page.txs[page.txs.length - 1].slot);
@@ -353,7 +401,7 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
         await store.cmd('HSET', K.idx(q.day), q.mint, `f|${RULES_VERSION}|${SCORING_VERSION}`);
         continue;
       }
-      const needsReplay = s.rv !== RULES_VERSION;
+      const needsReplay = s.rv !== RULES_VERSION || s.lv !== WALLET_LEDGER_VERSION;
       const needsRescore = s.sv !== SCORING_VERSION;
       if (s.final && !needsReplay && !needsRescore && !s.rebuildPending) {
         await store.cmd('HSET', K.idx(q.day), q.mint, `f|${RULES_VERSION}|${SCORING_VERSION}`);
@@ -364,12 +412,16 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
           const m = await chain.isMayhem(s.curve).catch(() => null);
           if (m !== null) s.mh = m;
         }
-        if (needsReplay) resetTradeAccounting(s);
+        if (needsReplay) {
+          resetTradeAccounting(s);
+          await store.cmd('DEL', K.walletCoin(s.mint));
+        }
         if (needsReplay || needsRescore) {
           s.rv = RULES_VERSION;
           s.sv = SCORING_VERSION;
+          s.lv = WALLET_LEDGER_VERSION;
         }
-        const res = await scanCoin(chain, s, r, now, deadline);
+        const res = await scanCoin(store, chain, s, r, now, deadline);
         // Scoring changes can be applied to a saved ledger. Do not replay all
         // transactions when only eligibility rules changed.
         if (needsRescore) res.changed = true;

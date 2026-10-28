@@ -70,6 +70,8 @@ export interface CoinState {
   rv?: number;
   /** score version this state was last published under; can be upgraded without replaying chain history */
   sv?: number;
+  /** version of independent per-wallet trade ledgers */
+  lv?: number;
   /** Existing published result is retained until the bonding curve has been replayed. */
   rebuildPending?: boolean;
   /** Bypasses age based scan backoff until a historical accounting replay is final. */
@@ -230,6 +232,66 @@ function blank(): WalletPnl {
     matchedSoldCostSol: 0,
     matchedSoldProceedsSol: 0,
   };
+}
+
+export interface WalletCoinLedger {
+  pnl: WalletPnl;
+  buys: BuyCand[];
+}
+
+/**
+ * Accumulate one wallet independently from the compact coin state.
+ * This ledger is persisted separately so size limits on a coin's main state
+ * cannot silently erase a wallet's trade history.
+ */
+export function applyWalletLedgerTrades(
+  s: Pick<CoinState, 'dayEnd' | 'createSlot' | 'dev'>,
+  record: WalletCoinLedger,
+  trades: Trade[],
+  r: Rules
+): void {
+  const p = record.pnl;
+  for (const t of trades) {
+    if (t.time >= s.dayEnd || (s.dev && t.wallet === s.dev)) continue;
+    const inSkip = s.createSlot > 0 && t.slot <= s.createSlot + r.skipSlots;
+    if (inSkip) {
+      if (t.side === 'buy') p.sn = 1;
+      continue;
+    }
+
+    p.n = (p.n || 0) + 1;
+    if (t.side === 'buy') {
+      p.bs += t.sol;
+      p.bt += t.tokens;
+      p.inventoryTokens = (p.inventoryTokens || 0) + t.tokens;
+      p.inventoryCostSol = (p.inventoryCostSol || 0) + t.sol;
+      if (!p.fb) p.fb = t.time;
+      p.lb = t.time;
+      if (t.sol >= r.minBuySol) {
+        const last = record.buys[record.buys.length - 1];
+        if (!last || t.price < last.price) {
+          record.buys.push({ slot: t.slot, time: t.time, price: t.price, sol: t.sol, sig: t.sig });
+          if (record.buys.length > MAX_CANDS_PER_WALLET) record.buys.shift();
+        }
+      }
+    } else {
+      p.ss += t.sol;
+      p.st += t.tokens;
+      p.ls = t.time;
+      const inventoryTokens = p.inventoryTokens || 0;
+      const inventoryCostSol = p.inventoryCostSol || 0;
+      if (inventoryTokens > 0 && t.tokens > 0) {
+        const matchedTokens = Math.min(t.tokens, inventoryTokens);
+        const matchedCost = inventoryCostSol * (matchedTokens / inventoryTokens);
+        const matchedProceeds = t.sol * (matchedTokens / t.tokens);
+        p.matchedSoldTokens = (p.matchedSoldTokens || 0) + matchedTokens;
+        p.matchedSoldCostSol = (p.matchedSoldCostSol || 0) + matchedCost;
+        p.matchedSoldProceedsSol = (p.matchedSoldProceedsSol || 0) + matchedProceeds;
+        p.inventoryTokens = Math.max(0, inventoryTokens - matchedTokens);
+        p.inventoryCostSol = Math.max(0, inventoryCostSol - matchedCost);
+      }
+    }
+  }
 }
 
 /** Highest price at or after the given slot. */

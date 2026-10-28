@@ -18,6 +18,8 @@ export const K = {
   zwin: (d: string) => `day:${d}:zwin`,
   zloss: (d: string) => `day:${d}:zloss`,
   coin: (m: string) => `coin:${m}`,
+  /** all-wallet per-coin ledgers live separately so packed coin state pruning cannot hide random wallets */
+  walletCoin: (m: string) => `coinwallets:${m}`,
   res: (m: string) => `res:${m}`,
   snap: (r: Range) => `snap:${r}`,
   coinsum: (d: string) => `day:${d}:coinsum`,

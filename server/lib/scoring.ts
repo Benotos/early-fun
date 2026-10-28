@@ -56,11 +56,11 @@ const ROW_CAP = 1500;
 
 /**
  * Board entries must be a closed, self-funded trade: tokens sold must match tokens
- * bought, within 2% to allow small rounding/dust differences. Selling extra tokens
+ * bought, allowing only 0.1% for tiny rounding/dust differences. Selling extra tokens
  * received by transfer is an anti-abuse failure, even if part of the sale matches
  * the wallet's tracked purchases.
  */
-export function tokenFlowBalanced(p: CoinState['pnl'][string], tolerance = 0.02): boolean {
+export function tokenFlowBalanced(p: CoinState['pnl'][string], tolerance = 0.001): boolean {
   if (!p || !(p.bt > 0) || !(p.st > 0)) return false;
   const ratio = p.st / p.bt;
   if (!Number.isFinite(ratio) || ratio < 1 - tolerance || ratio > 1 + tolerance) return false;
@@ -77,7 +77,7 @@ function tokenFlowExplanation(p: CoinState['pnl'][string]): string {
   const sold = p.st / scale;
   const ratio = p.bt > 0 ? (p.st / p.bt) * 100 : 0;
   const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: TOKEN_DECIMALS });
-  return `token amounts must match: bought ${fmt(bought)}, sold ${fmt(sold)} (${ratio.toFixed(1)}% out)`;
+  return `token amounts must match within 0.1%: bought ${fmt(bought)}, sold ${fmt(sold)} (${ratio.toFixed(3)}% out)`;
 }
 
 /**
@@ -91,6 +91,9 @@ export function winnerRows(s: CoinState, r: Rules): WinRow[] {
   for (const [wallet, cands] of Object.entries(s.buys)) {
     if ((s.pnl[wallet]?.n || 0) > r.maxWalletTrades) continue; // volume bot
     const p = s.pnl[wallet];
+    // Any wallet that sells must sell only the quantity it bought, even when
+    // peak mode is configured to allow holders.
+    if (p && p.st > 0 && !tokenFlowBalanced(p)) continue;
     if (r.winRequireSell && (!p || !tokenFlowBalanced(p))) continue; // must sell the purchased amount, not a transferred bag
     if (r.winRequireSell && !((p?.ss || 0) > 0)) continue; // must have taken profit, not just held
     let best: { c: (typeof cands)[number]; mult: number; peak: number } | null = null;
@@ -260,7 +263,7 @@ export function explainWallet(s: CoinState, r: Rules, wallet: string): { winner:
   const x = realizedOf(s, wallet);
   const balanced = tokenFlowBalanced(p);
   const winner: Check[] = [...base];
-  winner.push({ ok: balanced, text: balanced ? 'tokens bought and sold match within 2%' : tokenFlowExplanation(p) });
+  winner.push({ ok: balanced, text: balanced ? 'tokens bought and sold match' : tokenFlowExplanation(p) });
   if (r.winMode === 'realized') {
     winner.push({ ok: p.ss > 0, text: p.ss > 0 ? `sold for ${f(p.ss)} SOL` : 'has not sold yet, holders do not count' });
     if (x) {
@@ -271,7 +274,7 @@ export function explainWallet(s: CoinState, r: Rules, wallet: string): { winner:
   }
   const loser: Check[] = [...base];
   const exited = p.bt > 0 ? p.st / p.bt : 0;
-  loser.push({ ok: balanced, text: balanced ? 'tokens bought and sold match within 2%' : tokenFlowExplanation(p) });
+  loser.push({ ok: balanced, text: balanced ? 'tokens bought and sold match' : tokenFlowExplanation(p) });
   const loss = x ? x.cost - x.proceeds : 0;
   if (exited >= 0.9) loser.push({ ok: !!x && loss >= r.minLossSol, text: !x ? 'no sold tokens matched to tracked purchases' : loss > 0 ? `lost ${f(loss)} SOL${loss < r.minLossSol ? `, minimum is ${r.minLossSol}` : ''}` : 'made money on this coin, not a loss' });
   const held = p.ls && p.lb ? p.ls - p.lb : 0;
