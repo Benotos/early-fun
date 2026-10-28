@@ -6,7 +6,7 @@ import { HttpError, limited, route } from '../lib/http';
 import { rules } from '../lib/env';
 import { applyWalletLedgerTrades, CoinState, newCoin, WalletCoinLedger, unpackState } from '../lib/coin';
 import { junkReasons, realizedOf } from '../lib/scoring';
-import { needsTickerLookup, pumpTickerFromResponse, resolveWalletTicker, walletTradesFromTransactions } from '../lib/wallet-scan';
+import { dexTickerFromResponse, needsTickerLookup, pumpTickerFromResponse, resolveWalletTicker, walletTradesFromTransactions } from '../lib/wallet-scan';
 import { getStore } from '../lib/store';
 
 function parse<T>(raw: unknown): T | null {
@@ -316,9 +316,9 @@ export default route(async ({ q, ip }) => {
   // Keep both providers bounded by the serverless response budget.
   if (toFetch.length > 0) {
     try {
-      const availableMs = Math.max(0, 9000 - (Date.now() - routeStartedAt));
+      const availableMs = Math.max(0, 18000 - (Date.now() - routeStartedAt));
       const canFetch = availableMs > 1800;
-      const deadline = Date.now() + Math.min(3500, Math.max(0, availableMs - 300));
+      const deadline = Date.now() + Math.min(6000, Math.max(0, availableMs - 500));
       const metadataChain = new HeliusChain();
       if (canFetch) metadataChain.setDeadline(deadline);
       const lookups = canFetch ? toFetch.slice(0, 12) : [];
@@ -340,11 +340,27 @@ export default route(async ({ q, ip }) => {
             // Some Pump.fun responses require auth or can be temporarily unavailable.
           }
         }
-        if (!symbol && deadline - Date.now() > 1500) {
-          const meta = await metadataChain.tokenMeta(mint);
-          if (meta?.symbol) {
-            const ticker = resolveWalletTicker(mint, undefined, meta.symbol);
-            if (ticker !== 'UNKNOWN') symbol = ticker;
+        if (!symbol && deadline - Date.now() > 700) {
+          try {
+            const timeout = Math.min(1300, Math.max(300, deadline - Date.now() - 150));
+            const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(mint)}`, {
+              headers: { Accept: 'application/json' },
+              signal: AbortSignal.timeout(timeout),
+            });
+            if (response.ok) symbol = dexTickerFromResponse(await response.json(), mint);
+          } catch {
+            // Keep falling through to the chain metadata source.
+          }
+        }
+        if (!symbol && deadline - Date.now() > 700) {
+          try {
+            const meta = await metadataChain.tokenMeta(mint);
+            if (meta?.symbol) {
+              const ticker = resolveWalletTicker(mint, undefined, meta.symbol);
+              if (ticker !== 'UNKNOWN') symbol = ticker;
+            }
+          } catch {
+            // Final fallback below is UNKNOWN; never publish the mint as a ticker.
           }
         }
         return [mint, symbol] as const;
