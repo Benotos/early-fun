@@ -1,5 +1,5 @@
 export const SITE_NAME: string = import.meta.env.VITE_SITE_NAME || 'EARLY.FUN';
-export const TOKEN_CA: string = (import.meta.env.VITE_TOKEN_CA || '').trim();
+export const TOKEN_CA: string = (import.meta.env.VITE_TOKEN_CA || 'HUtnVhy3tx6GpSaRTUt93zBksaHWf4XwoGNaT8wapump').trim();
 export const X_URL: string = import.meta.env.VITE_X_URL || 'https://x.com/EarlyDotFun_';
 export const PAYOUTS_LIVE: boolean = import.meta.env.VITE_PAYOUTS_LIVE === '1';
 export const pumpUrl = (mint: string) => `https://pump.fun/coin/${mint}`;
