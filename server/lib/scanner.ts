@@ -516,7 +516,14 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
       }
       const h = await store.hgetall(K.idx(d));
       for (const [m, v] of Object.entries(h)) {
-        if (v === `f|${RULES_VERSION}|${SCORING_VERSION}`) continue;
+        if (v === `f|${RULES_VERSION}|${SCORING_VERSION}`) {
+          // Finalized board entries with an AMM pool still need tail polling:
+          // final means the leaderboard window is closed, not that the live chart stops.
+          const finalized = await loadCoin(store, m);
+          if (!finalized?.pool) continue;
+          queue.push({ mint: m, day: d, last: Number(finalized.lastScan) || 0 });
+          continue;
+        }
         if (v === 'f' || v.startsWith('f|')) {
           const parts = v.split('|');
           const rulesVersion = v === 'f' ? 0 : Number(parts[1]) || 0;
