@@ -31,7 +31,7 @@ export default function CandleChart({ mint }: { mint: string; candles?: [number,
         </span>
         <a className="btn small-btn" href={src} target="_blank" rel="noopener noreferrer">Open Pump.fun ↗</a>
       </div>
-      <div className="pump-live-frame">
+      <div className="pump-live-frame" style={{ height: 430, minHeight: 320, position: 'relative', overflow: 'hidden', borderRadius: 10 }}>
         <iframe
           key={mint}
           title={`Pump.fun live chart for ${mint}`}
@@ -39,7 +39,7 @@ export default function CandleChart({ mint }: { mint: string; candles?: [number,
           loading="eager"
           referrerPolicy="no-referrer"
           allow="clipboard-read; clipboard-write"
-          className="pump-live-iframe"
+          className="pump-live-iframe" style={{ display: 'block', width: '100%', height: '100%', border: 0, background: '#080810' }}
         />
       </div>
     </div>
