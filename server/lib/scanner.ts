@@ -357,7 +357,7 @@ async function scanCoin(
   // the pool had no more pages at that moment; keep polling the tail until the
   // coin's board window ends so new swaps update candles and wallet ledgers.
   if (s.pool) {
-    if (!s.final && s.poolDone) {
+    if (s.poolDone) {
       s.poolDone = false;
       s.poolTok = null;
     }
@@ -366,7 +366,6 @@ async function scanCoin(
         sort: 'asc',
         token: s.poolTok,
         slotGt: s.poolSlot,
-        blockTimeLt: s.dayEnd,
       });
       pages++;
       const trades: Trade[] = [];
@@ -550,7 +549,7 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
       }
       const needsReplay = s.rv !== RULES_VERSION || s.lv !== WALLET_LEDGER_VERSION;
       const needsRescore = s.sv !== SCORING_VERSION;
-      if (s.final && !needsReplay && !needsRescore && !s.rebuildPending) {
+      if (s.final && !needsReplay && !needsRescore && !s.rebuildPending && !s.pool) {
         await store.cmd('HSET', K.idx(q.day), q.mint, `f|${RULES_VERSION}|${SCORING_VERSION}`);
         continue;
       }
@@ -591,7 +590,7 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
           'HSET',
           K.idx(s.day),
           s.mint,
-          s.final
+          s.final && !s.pool
             ? `f|${RULES_VERSION}|${SCORING_VERSION}`
             : `${now}|${s.migTime}${s.replayAccounting ? '|r' : ''}`
         );
