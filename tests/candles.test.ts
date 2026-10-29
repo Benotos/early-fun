@@ -14,6 +14,15 @@ describe('candles', () => {
       [120, 12, 20, 12, 18],
     ]);
   });
+  it('keeps price candles live after the daily leaderboard window closes without counting later trades', () => {
+    const s = newCoin({ mint: 'm', curve: 'c', pool: 'pool', migTime: 0, migSig: 'x', day: '2026-10-27', dayEnd: 100 });
+    s.sres = 1;
+    const tr = (time: number, price: number) => ({ sig: 's' + time, slot: time, time, wallet: 'w' + time, side: 'buy' as const, sol: 1, tokens: 1, price });
+    applyTrades(s, [tr(99, 10), tr(101, 12)], rules());
+    expect(s.trades).toBe(1);
+    expect(rawBars(s).map((bar) => [bar[0], bar[4]])).toEqual([[99, 10], [101, 12]]);
+    expect(s.pnl['w101']).toBeUndefined();
+  });
   it('groups into bigger candles when there are too many minutes', () => {
     const s = newCoin({ mint: 'm', curve: 'c', pool: null, migTime: 0, migSig: 'x', day: '2026-10-27', dayEnd: 1e12 });
     const trades = Array.from({ length: 600 }, (_, i) => ({ sig: 's' + i, slot: i, time: i * 60, wallet: 'w', side: 'buy' as const, sol: 1, tokens: 1, price: 1 + i }));
