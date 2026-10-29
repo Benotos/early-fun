@@ -353,8 +353,14 @@ async function scanCoin(
     }
   }
 
-  // AMM pool venue (after migration)
+  // AMM pool venue (after migration). A completed historical read only means
+  // the pool had no more pages at that moment; keep polling the tail until the
+  // coin's board window ends so new swaps update candles and wallet ledgers.
   if (s.pool) {
+    if (!s.final && s.poolDone) {
+      s.poolDone = false;
+      s.poolTok = null;
+    }
     while (!s.poolDone && pages < r.maxPagesPerCoin && Date.now() < deadline) {
       const page = await chain.txsForAddress(s.pool, {
         sort: 'asc',
