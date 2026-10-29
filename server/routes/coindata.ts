@@ -3,7 +3,7 @@ import { CoinResponse, CoinLossRow, CoinWinRow } from '../../shared/types';
 import { K } from '../lib/boards';
 import { HttpError, route } from '../lib/http';
 import { blockedMints, rules } from '../lib/env';
-import { explainWallet, junkReasons, realizedOf, unpackResult } from '../lib/scoring';
+import { explainWallet, junkReasons, realizedLossRows, realizedOf, unpackResult } from '../lib/scoring';
 import { loadCoin } from '../lib/scanner';
 import { WalletCheckResponse } from '../../shared/types';
 import { getStore } from '../lib/store';
@@ -27,7 +27,7 @@ export default route(async ({ q }) => {
     return { json: await checkWallet(store, mint, wallet) };
   }
   if (blockedMints().has(mint)) throw new HttpError(404, 'coin_blocked', 'This coin is hidden from EARLY.FUN.');
-  const [rawRes, rawChart, rawSol] = await Promise.all([store.get(K.res(mint)), store.get(K.chart(mint)), store.get('solusd')]);
+  const [rawRes, rawChart, rawSol, coinState] = await Promise.all([store.get(K.res(mint)), store.get(K.chart(mint)), store.get('solusd'), loadCoin(store, mint)]);
   if (!rawRes) throw new HttpError(404, 'coin_not_found', 'This coin is not tracked. Only pump.fun coins that migrated in the last few days are.');
   const solUsd = Number(parse(rawSol)?.p);
   if (!(solUsd > 0)) throw new HttpError(503, 'no_price', 'SOL price is not cached yet, try again in a minute');
@@ -36,7 +36,9 @@ export default route(async ({ q }) => {
   if (res.jk) throw new HttpError(404, 'coin_filtered', 'This coin is filtered out: it failed the quality checks (fake or bundled launch, too little real trading, or Mayhem Mode), so it never counts on the boards.');
   const needSell = rules().winRequireSell;
   const w = res.w.filter((x) => !needSell || (x.out || 0) > 0).slice(0, 15);
-  const l = res.l.slice(0, 15);
+  // Coin detail shows all matched realized losses (including partial exits); the
+  // stat above still counts only strict leaderboard-qualified losers.
+  const l = (coinState ? realizedLossRows(coinState) : res.l).slice(0, 15);
   const got = w.length + l.length
     ? await store.run([...w.map((x) => ['HGET', K.win(res.day), x.wallet]), ...l.map((x) => ['HGET', K.loss(res.day), x.wallet])])
     : [];
