@@ -92,7 +92,7 @@ export default function CoinPage() {
                 </span>
                 <span className="dim mono small">market cap · {data.coin.trades.toLocaleString('en-US')} trades read</span>
               </div>
-              <CandleChart candles={data.chart} mig={data.coin.mig} />
+              <CandleChart mint={mint} />
             </div>
 
             <div className="two coin-cols">
