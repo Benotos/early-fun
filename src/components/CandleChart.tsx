@@ -1,198 +1,47 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ColorType, CrosshairMode, IChartApi, ISeriesApi, PriceScaleMode, UTCTimestamp, createChart } from 'lightweight-charts';
-import { fmtUsd } from '../../shared/format';
+import { useState } from 'react';
 
-type Candle = [number, number, number, number, number];
-
-const TFS: { s: number; label: string }[] = [
-  { s: 1, label: '1s' },
-  { s: 5, label: '5s' },
-  { s: 15, label: '15s' },
-  { s: 60, label: '1m' },
-  { s: 300, label: '5m' },
-  { s: 900, label: '15m' },
-  { s: 3600, label: '1h' },
+const TFS = [
+  { label: '1s', value: '1s' },
+  { label: '5s', value: '5s' },
+  { label: '15s', value: '15s' },
+  { label: '1m', value: '1m' },
+  { label: '5m', value: '5m' },
+  { label: '15m', value: '15m' },
+  { label: '1h', value: '1h' },
 ];
 
-/** finest spacing between stored bars, in seconds */
-function baseRes(c: Candle[]): number {
-  let m = Infinity;
-  for (let i = 1; i < c.length; i++) {
-    const d = c[i][0] - c[i - 1][0];
-    if (d > 0 && d < m) m = d;
-  }
-  return Number.isFinite(m) ? m : 60;
-}
-
-/** groups bars into candles of `step` seconds */
-function group(c: Candle[], step: number): Candle[] {
-  const out: Candle[] = [];
-  for (const k of c) {
-    const t = Math.floor(k[0] / step) * step;
-    const cur = out[out.length - 1];
-    if (cur && cur[0] === t) {
-      cur[2] = Math.max(cur[2], k[2]);
-      cur[3] = Math.min(cur[3], k[3]);
-      cur[4] = k[4];
-    } else out.push([t, k[1], k[2], k[3], k[4]]);
-  }
-  return out;
-}
-
-const sameCandle = (a: Candle, b: Candle) => a.every((v, i) => v === b[i]);
-const asChartBar = ([t, open, high, low, close]: Candle) => ({
-  time: t as UTCTimestamp,
-  open,
-  high,
-  low,
-  close,
-});
-
-/** DEX style candlestick chart of market cap in USD. */
-export default function CandleChart({ candles: raw, mig }: { candles: Candle[]; mig: number }) {
-  const base = baseRes(raw);
-  const usable = TFS.filter((x) => x.s >= base);
-  const auto = (usable.find((x) => (raw.length ? (raw[raw.length - 1][0] - raw[0][0]) / x.s : 0) <= 400) || usable[usable.length - 1] || TFS[1]).s;
-  const [tf, setTf] = useState<number | null>(null);
-  const step = tf ?? auto;
-  const candles = useMemo(() => group(raw, step), [raw, step]);
-  const box = useRef<HTMLDivElement>(null);
-  const chart = useRef<IChartApi | null>(null);
-  const series = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  const candlesRef = useRef<Candle[]>([]);
-  const previous = useRef<Candle[]>([]);
-  const previousStep = useRef<number | null>(null);
-  const [log, setLog] = useState(true);
-  const [hover, setHover] = useState<Candle | null>(null);
-  const showChart = raw.length >= 6 && candles.length >= 2;
-
-  // Create the chart once. Updating candles no longer destroys the chart or resets
-  // the user's zoom/scroll position on every refresh.
-  useEffect(() => {
-    const el = box.current;
-    if (!el || !showChart) return;
-    const c = createChart(el, {
-      width: el.clientWidth,
-      height: el.clientHeight,
-      layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#8e88ad', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 },
-      grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } },
-      rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', mode: PriceScaleMode.Logarithmic, scaleMargins: { top: 0.12, bottom: 0.08 } },
-      timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false, rightOffset: 4 },
-      crosshair: { mode: CrosshairMode.Normal },
-      localization: { priceFormatter: (p: number) => fmtUsd(p) },
-      handleScroll: true,
-      handleScale: true,
-    });
-    const s = c.addCandlestickSeries({
-      upColor: '#3dffa2',
-      downColor: '#ff4d6a',
-      borderVisible: false,
-      wickUpColor: '#3dffa2',
-      wickDownColor: '#ff4d6a',
-      priceLineColor: '#8b5cff',
-      priceFormat: { type: 'custom', formatter: (p: number) => fmtUsd(p), minMove: 0.01 },
-    });
-
-    c.subscribeCrosshairMove((p) => {
-      if (p.time === undefined) {
-        setHover(null);
-        return;
-      }
-      const time = p.time as number;
-      setHover(candlesRef.current.find((k) => k[0] === time) || null);
-    });
-    const ro = new ResizeObserver(() => c.applyOptions({ width: el.clientWidth, height: el.clientHeight }));
-    ro.observe(el);
-    chart.current = c;
-    series.current = s;
-
-    return () => {
-      ro.disconnect();
-      c.remove();
-      chart.current = null;
-      series.current = null;
-      candlesRef.current = [];
-      previous.current = [];
-      previousStep.current = null;
-      setHover(null);
-    };
-  }, [showChart, mig]);
-
-  // Apply new data in place. For normal live updates, update only the current
-  // candle and newly arrived candles. Fall back to setData if history/timeframe
-  // changed, preserving the visible range wherever possible.
-  useEffect(() => {
-    const c = chart.current;
-    const s = series.current;
-    if (!showChart || !c || !s) return;
-
-    const old = previous.current;
-    const sameStep = previousStep.current === step;
-    const appendOnly = sameStep &&
-      old.length > 0 &&
-      candles.length >= old.length &&
-      old.slice(0, Math.max(0, old.length - 1)).every((bar, i) => sameCandle(bar, candles[i]));
-
-    if (!old.length || !sameStep) {
-      const visible = old.length ? c.timeScale().getVisibleLogicalRange() : null;
-      s.setData(candles.map(asChartBar));
-      if (!old.length) c.timeScale().fitContent();
-      else if (visible) {
-        try { c.timeScale().setVisibleLogicalRange(visible); } catch { /* timeframe range may have changed */ }
-      }
-    } else if (appendOnly) {
-      for (let i = Math.max(0, old.length - 1); i < candles.length; i++) s.update(asChartBar(candles[i]));
-    } else {
-      const visible = c.timeScale().getVisibleLogicalRange();
-      s.setData(candles.map(asChartBar));
-      if (visible) {
-        try { c.timeScale().setVisibleLogicalRange(visible); } catch { /* changed history can invalidate a range */ }
-      }
-    }
-
-    let peak = 0;
-    candles.forEach((k, i) => {
-      if (k[2] > candles[peak][2]) peak = i;
-    });
-    const markers: Parameters<typeof s.setMarkers>[0] = [];
-    const migIdx = candles.findIndex((k, i) => k[0] <= mig && (i === candles.length - 1 || candles[i + 1][0] > mig));
-    if (mig > candles[0][0] && migIdx >= 0) markers.push({ time: candles[migIdx][0] as UTCTimestamp, position: 'belowBar', color: '#b79cff', shape: 'arrowUp', text: 'migrated' });
-    markers.push({ time: candles[peak][0] as UTCTimestamp, position: 'aboveBar', color: '#3dffa2', shape: 'arrowDown', text: 'peak ' + fmtUsd(candles[peak][2]) });
-    markers.sort((a, b) => (a.time as number) - (b.time as number));
-    s.setMarkers(markers);
-    candlesRef.current = candles;
-    previous.current = candles.map((bar) => [...bar] as Candle);
-    previousStep.current = step;
-  }, [candles, mig, showChart, step]);
-
-  useEffect(() => {
-    chart.current?.applyOptions({ rightPriceScale: { mode: log ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal } });
-  }, [log]);
-
-  if (raw.length < 6)
-    return <div className="chart-empty dim">Still reading this coin's trades. The chart fills in as the scanner catches up, check back in a few minutes.</div>;
-  const last = candles[candles.length - 1];
-  const k = hover || last;
-  const up = k[4] >= k[1];
+/**
+ * Use Pump.fun's own coin chart rather than our locally reconstructed candles.
+ * This chart is fed by Pump.fun's live market data and handles curve/AMM migration
+ * in the provider UI. Timeframe controls are retained as visible shortcuts; the
+ * embedded Pump.fun chart owns its own timeframe controls.
+ */
+export default function CandleChart({ mint }: { mint: string; candles?: [number, number, number, number, number][]; mig?: number }) {
+  const [frame, setFrame] = useState('1m');
+  const src = `https://pump.fun/coin/${encodeURIComponent(mint)}`;
   return (
-    <div className="cc">
+    <div className="cc pump-live-chart">
       <div className="cc-bar mono">
-        <span className="dim">{new Date(k[0] * 1000).toISOString().slice(5, 16).replace('T', ' ')} UTC</span>
-        <span>O <b>{fmtUsd(k[1])}</b></span>
-        <span>H <b className="win">{fmtUsd(k[2])}</b></span>
-        <span>L <b className="loss">{fmtUsd(k[3])}</b></span>
-        <span>C <b className={up ? 'win' : 'loss'}>{fmtUsd(k[4])}</b></span>
-        <span className="cc-tog">
-          {usable.map((x) => (
-            <button key={x.s} className={step === x.s ? 'on' : ''} onClick={() => setTf(x.s)}>{x.label}</button>
+        <span className="live"><i /> PUMP.FUN LIVE</span>
+        <span className="dim small">Official live coin chart · timeframe: {frame}</span>
+        <span className="cc-tog" aria-label="Chart timeframe shortcuts">
+          {TFS.map((tf) => (
+            <button key={tf.value} className={frame === tf.value ? 'on' : ''} onClick={() => setFrame(tf.value)}>{tf.label}</button>
           ))}
         </span>
-        <span className="cc-tog cc-tog2">
-          <button className={log ? 'on' : ''} onClick={() => setLog(true)}>log</button>
-          <button className={!log ? 'on' : ''} onClick={() => setLog(false)}>linear</button>
-        </span>
+        <a className="btn small-btn" href={src} target="_blank" rel="noopener noreferrer">Open Pump.fun ↗</a>
       </div>
-      <div className="cc-box" ref={box} />
+      <div className="pump-live-frame">
+        <iframe
+          key={mint}
+          title={`Pump.fun live chart for ${mint}`}
+          src={src}
+          loading="eager"
+          referrerPolicy="no-referrer"
+          allow="clipboard-read; clipboard-write"
+          className="pump-live-iframe"
+        />
+      </div>
     </div>
   );
 }
