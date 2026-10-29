@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { findFunder, txKeys } from '../server/lib/chain';
 import { applyTrades, newCoin } from '../server/lib/coin';
-import { explainWallet, realizedOf, realizedRows, tokenFlowBalanced } from '../server/lib/scoring';
+import { explainWallet, realizedLossRows, realizedOf, realizedRows, tokenFlowBalanced } from '../server/lib/scoring';
 import { extractTrade, parseMigration, pumpGlobalFeeSolForTrade } from '../server/lib/trades';
 import { rules, WSOL } from '../server/lib/env';
 import { curveAddress } from '../server/lib/pda';
@@ -156,6 +156,25 @@ describe('strict bought and sold token matching', () => {
     expect(tokenFlowBalanced(s.pnl[trackedWallet])).toBe(false);
     expect(realizedOf(s, trackedWallet)).toBeNull();
     expect(realizedRows(s, rules())).toEqual([]);
+  });
+
+  it('shows matched realized losses from a partial exit on coin detail even when not board-qualified', () => {
+    const trackedWallet = fakeKey();
+    const s = coinFor(trackedWallet);
+
+    applyTrades(s, [
+      { sig: 'buy', slot: 100, time: 1_700_000_000, wallet: trackedWallet, side: 'buy', sol: 1, tokens: 10_000_000, price: 0.1 },
+      { sig: 'partial-loss-sale', slot: 200, time: 1_700_000_600, wallet: trackedWallet, side: 'sell', sol: 0.25, tokens: 5_000_000, price: 0.05 },
+    ], rules());
+
+    // A partial exit doesn't qualify for the strict leaderboard, but its matched
+    // sold inventory did realize a genuine loss and should appear on the coin page.
+    expect(realizedOf(s, trackedWallet)).toBeNull();
+    const losses = realizedLossRows(s);
+    expect(losses).toHaveLength(1);
+    expect(losses[0].wallet).toBe(trackedWallet);
+    expect(losses[0].lossSol).toBeCloseTo(0.5 - 0.25, 8);
+    expect(losses[0].lossPct).toBeCloseTo(50, 8);
   });
 
   it('rejects partial exits because bought and sold amounts do not match', () => {
