@@ -67,13 +67,13 @@ const RULES_VERSION = 10;
 const SCORING_VERSION = 12;
 const WALLET_LEDGER_VERSION = 2;
 
-/** seconds between re-reads of a coin, by how long ago it migrated */
+/** Keep migrated coin charts fresh. The refresh worker runs every two minutes,
+ * so never back off live pool reads for several minutes based only on coin age.
+ * RESCAN_BACKOFF=0 remains an explicit override for immediate rescans. */
 function rescanEvery(ageSec: number): number {
+  void ageSec;
   if (process.env.RESCAN_BACKOFF === '0') return 0;
-  if (ageSec < 2 * 3600) return 0;
-  if (ageSec < 6 * 3600) return 60;
-  if (ageSec < 12 * 3600) return 120;
-  return 300;
+  return 30;
 }
 
 /** Reset only derived trade state so legacy coins can be replayed with matched-token accounting. */
