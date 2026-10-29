@@ -601,15 +601,19 @@ export async function runScan(o: ScanOpts): Promise<ScanReport> {
             ? `f|${RULES_VERSION}|${SCORING_VERSION}`
             : `${now}|${s.migTime}${s.replayAccounting ? '|r' : ''}`
         );
-        if (res.changed && !s.rebuildPending) {
-          report.changed++;
-          const computed = computeResult(s, r, now);
-          await store.set(K.res(s.mint), packResult(computed), COIN_TTL);
-          liveSummaryUpdates.set(s.mint, computed);
+        if (res.changed) {
+          // Candles are independent of leaderboard/accounting replay. Always publish
+          // changed price history, even while a coin's wallet ledger is rebuilding.
           const mc = (p: number) => Number((p * TOTAL_SUPPLY).toPrecision(6));
           const pts = rawBars(s).map(([t, o, h, l, c]) => [t, mc(o), mc(h), mc(l), mc(c)]);
           await store.set(K.chart(s.mint), JSON.stringify(pts), COIN_TTL);
-          dirty.add(s.day);
+          if (!s.rebuildPending) {
+            report.changed++;
+            const computed = computeResult(s, r, now);
+            await store.set(K.res(s.mint), packResult(computed), COIN_TTL);
+            liveSummaryUpdates.set(s.mint, computed);
+            dirty.add(s.day);
+          }
         }
       } catch (e) {
         report.errors.push(`coin ${s.symbol} ` + (e instanceof Error ? e.message : String(e)));
