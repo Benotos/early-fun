@@ -194,6 +194,50 @@ export function realizedRows(s: CoinState, r: Rules): WinRow[] {
  * Guards: not a sniper, not the dev, buy size >= MIN_BUY_SOL, exited 90 to 102 percent of what it bought,
  * held at least MIN_HOLD_SECONDS between its last buy and its last sell.
  */
+/**
+ * Raw, matched realized losses for a coin detail page.
+ *
+ * Unlike leaderboard losers, this includes partial exits and does not require the
+ * full-exit, minimum-loss, or minimum-hold leaderboard gates. It still excludes
+ * sales involving known foreign/transfer inventory and computes only against
+ * the wallet's matched tracked purchases, so displayed losses are real realized
+ * losses rather than mark-to-market guesses.
+ */
+export function realizedLossRows(s: CoinState): LossRow[] {
+  const out: LossRow[] = [];
+  for (const [wallet, p] of Object.entries(s.pnl)) {
+    if (!p || p.foreignInventory || p.bt <= 0 || p.st <= 0) continue;
+
+    const matchedTokens = typeof p.matchedSoldTokens === 'number'
+      ? p.matchedSoldTokens
+      : Math.min(p.bt, p.st);
+    if (!(matchedTokens > 0)) continue;
+
+    const cost = typeof p.matchedSoldCostSol === 'number'
+      ? p.matchedSoldCostSol
+      : p.bs * (matchedTokens / p.bt);
+    const proceeds = typeof p.matchedSoldProceedsSol === 'number'
+      ? p.matchedSoldProceedsSol
+      : p.ss * (matchedTokens / p.st);
+    if (!(cost > 0) || !(proceeds > 0) || !(cost > proceeds)) continue;
+
+    const unitsSold = matchedTokens / (10 ** TOKEN_DECIMALS);
+    if (!(unitsSold > 0)) continue;
+    const lossSol = cost - proceeds;
+    out.push({
+      wallet,
+      lossSol,
+      lossPct: (lossSol / cost) * 100,
+      buyMc: mcSol(cost / unitsSold),
+      sellMc: mcSol(proceeds / unitsSold),
+      buySol: cost,
+      sellSol: proceeds,
+      lastSell: p.ls,
+    });
+  }
+  return out.sort((a, b) => b.lossSol - a.lossSol || b.lossPct - a.lossPct);
+}
+
 export function loserRows(s: CoinState, r: Rules): LossRow[] {
   const out: LossRow[] = [];
   for (const [wallet, p] of Object.entries(s.pnl)) {
