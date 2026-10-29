@@ -139,8 +139,8 @@ export function newCoin(p: {
 /** Feeds trades (ascending order) into the coin state. */
 export function applyTrades(s: CoinState, trades: Trade[], r: Rules): void {
   for (const t of trades) {
-    if (t.time >= s.dayEnd) continue; // outside this board's window
-    s.trades++;
+    // Keep price candles live after the daily leaderboard window closes. Only
+    // leaderboard/wallet accounting is limited to the coin's migration day.
     {
       const ser = (s.ser ||= []);
       const b = Math.floor(t.time / (s.sres || 60));
@@ -163,6 +163,8 @@ export function applyTrades(s: CoinState, trades: Trade[], r: Rules): void {
         }
       }
     }
+    if (t.time >= s.dayEnd) continue; // chart only; never affect the daily leaderboard
+    s.trades++;
     const inSkip = s.createSlot > 0 && t.slot <= s.createSlot + r.skipSlots;
     if (inSkip) {
       if (t.side === 'buy') {
